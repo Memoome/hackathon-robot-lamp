@@ -3,3 +3,4 @@ evidence/
 firmware/components/
 firmware/sdkconfig
 firmware/dependencies.lock
+models/

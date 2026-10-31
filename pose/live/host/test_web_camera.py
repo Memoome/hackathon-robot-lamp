@@ -65,7 +65,7 @@ class CameraTests(unittest.TestCase):
         self.assertFalse(state['active'])
         self.assertTrue(state['stale'])
         self.assertEqual(state['count'], 1)
-        self.assertTrue(camera.image().startswith(b'\x89PNG'))
+        self.assertTrue(camera.image()[0].startswith(b'\x89PNG'))
 
     def test_detect_mode_reaches_session_and_skips_posture(self):
         seen = {}
@@ -94,11 +94,61 @@ class CameraTests(unittest.TestCase):
         self.assertEqual(state['result']['seq'], 3)
         camera.stop()
         camera.worker.join(1)
-        self.assertEqual(seen, {'rotation': 90, 'preview_every': 0})
+        self.assertEqual((seen['rotation'], seen['preview_every']), (90, 0))
+        self.assertIs(seen['commands'], camera.commands)
         self.assertEqual(camera.status()['mode'], 'detect')
-        camera.active = True
-        with self.assertRaisesRegex(ValueError, '关键点'):
-            camera.calibrate()
+
+    def test_scene_recording_needs_detect_stream_and_scores_detections(self):
+        camera = web.Camera(lambda *a, **k: None, lambda stop, emit, **k: stop.wait(5))
+        with self.assertRaises(ValueError):
+            camera.scene({'action': 'start', 'scene': 'near'})
+        camera.start(90, 'detect', 0)
+        camera.scene({'action': 'start', 'scene': 'near'})
+        for seq, people in ((1, [{'score': .9, 'box': [0, 0, 9, 9], 'center': [5, 5]}]), (2, [])):
+            camera.emit('det', dict(seq=seq, id=seq, t_ms=seq * 160, infer_ms=118.0, prep_ms=32.0, cycle_ms=160.0,
+                                    width=320, height=240, rotation=90, people=people, mode='detect'))
+        camera.scene({'action': 'end'})
+        result = camera.status()['scene']['results'][0]
+        self.assertEqual((result['scene'], result['frames'], result['detected_pct']), ('near', 2, 50.0))
+        with self.assertRaises(ValueError):
+            camera.scene({'action': 'mark', 'event': 'leave'})
+        camera.stop()
+        camera.worker.join(1)
+
+    def test_board_jpeg_runs_pc_pose_and_sends_verdict_back(self):
+        class FakeRunner:
+            def run(self, jpeg, rotation):
+                pts = [None] * 17
+                pts[0], pts[1], pts[2] = [160, 70], [172, 62], [148, 62]
+                pts[5], pts[6] = [200, 120], [120, 120]
+                return {'width': 320, 'height': 240, 'infer_ms': 40.0, 'decode_ms': 1.0, 'model': 'fake',
+                        'device': 'cpu', 'image_jpeg': b'\xff\xd8fake',
+                        'people': [{'score': .9, 'box': [100, 20, 220, 239], 'keypoints': pts}]}
+        camera = web.Camera(lambda *a, **k: None, lambda stop, emit, **k: stop.wait(5), FakeRunner())
+        camera.start(90, 'detect', 10)
+        det = dict(seq=7, id=7, t_ms=1000, infer_ms=118.0, prep_ms=32.0, cycle_ms=165.0, width=320, height=240,
+                   rotation=90, people=[{'score': .9, 'box': [102, 22, 218, 239], 'center': [160, 130]}],
+                   mode='detect', host_rx=50.15)
+        camera.emit('det', det)
+        camera.calibrate()
+        for _ in range(3):
+            camera.emit('jpeg', dict(seq=7, t_ms=1000, bytes=4, data=b'\xff\xd8xx', rotation=90, host_rx=50.4,
+                                     det=det, enc_ms=33.0, quality=80, reason='preview'))
+            for _ in range(200):
+                if camera.commands.qsize():
+                    break
+                time.sleep(0.01)
+            camera.commands.get_nowait()
+        state = camera.status()
+        self.assertEqual(state['pc_pose']['main'], 0)
+        # offset = 50.15 - (1000+32+118)/1000 = 49.0, capture = 1.0 + 49.0, received at 50.4
+        self.assertEqual(state['pc_pose']['board_to_pc_ms'], 400.0)
+        self.assertTrue(state['posture']['calibrated'])
+        self.assertTrue(state['image_url'].startswith('data:image/jpeg;base64,'))
+        camera.emit('pose_rx', {'seq': 7, 'state': 'normal', 'level': 'ok', 'stale': 0, 'count': 3})
+        self.assertIsNotNone(camera.status()['pose_rx']['ack_ms'])
+        camera.stop()
+        camera.worker.join(1)
 
     def test_failure_preserves_frame_but_never_calls_it_live(self):
         def session(stop, emit, **kwargs):

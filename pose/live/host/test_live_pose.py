@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import unittest
 import tempfile
 from pathlib import Path
@@ -109,13 +110,16 @@ class Tests(unittest.TestCase):
         frame=live.receive(Serial(lines),threading.Event(),lambda *a:None,mode='detect')
         self.assertNotEqual(live.overlay(frame),frame['rgb'])
     def stream_lines(self,stopped=True):
-        data=bytes([128,16,128,235])*9600;h=live.wire.fnv(data)
+        import base64
+        data=bytes(range(256))*20;h=live.wire.fnv(data)
         det=lambda seq,people=[]:'DET '+json.dumps(dict(seq=seq,t_ms=1000+seq*165,width=320,height=240,rotation=90,prep_ms=32.5,infer_ms=117.6,cycle_ms=165.0,people=people))
-        lines=[det(1),f'PREVIEW_BEGIN 2 38400 120 160 UYVY {h:08x}',det(2,[dict(score=.9,box=[10,20,300,230],center=[155,125])])]
-        lines+=[f'CAM_DATA {i} {data[i:i+96].hex()}' for i in range(0,len(data),96)]
-        lines+=[f'PREVIEW_END 2 38400 {h:08x}','STREAM_STATS {"valid":5,"bad":0,"dq_fail":0,"det":2,"preview":1,"preview_skipped":0,"psram_free":1}']
+        head=dict(seq=2,t_ms=1330,w=240,h=320,bytes=len(data),fnv32=f'{h:08x}',quality=80,enc_ms=33.8,reason='preview')
+        lines=[det(1),det(2,[dict(score=.9,box=[10,20,300,230],center=[155,125])]),'JPEG_BEGIN '+json.dumps(head)]
+        lines+=[f'JPEG_DATA {i} {base64.b64encode(data[i:i+144]).decode()}' for i in range(0,len(data),144)]
+        lines+=[f'JPEG_END 2 {len(data)} {h:08x}','POSE_RX {"seq":2,"state":"head_down","level":"watch","stale":0,"count":1,"latest_seq":3}',
+                'STREAM_STATS {"valid":5,"bad":0,"dq_fail":0,"det":2,"preview":1,"preview_skipped":0,"psram_free":1}']
         return lines+(['I cam_test: CAM_DONE result=OK streaming=OFF'] if stopped else [])
-    def test_stream_emits_detections_previews_and_stats(self):
+    def test_stream_emits_detections_jpeg_pose_ack_and_stats(self):
         stop=threading.Event();events=[]
         def emit(kind,value):
             events.append((kind,value))
@@ -123,15 +127,36 @@ class Tests(unittest.TestCase):
         s=Serial(self.stream_lines())
         live.receive_stream(s,stop,emit,90)
         kinds=[k for k,_ in events]
-        self.assertEqual(kinds,['det','det','preview','stats'])
-        preview=events[2][1]
-        self.assertEqual((preview['id'],preview['w'],preview['h']),(2,160,120))
-        self.assertEqual(preview['result']['people'][0]['center'],[155,125])
-        self.assertNotEqual(live.overlay(preview),preview['rgb'])
+        self.assertEqual(kinds,['det','det','jpeg','pose_rx','stats'])
+        frame=events[2][1]
+        self.assertEqual((frame['seq'],frame['bytes'],frame['rotation'],frame['reason']),(2,5120,90,'preview'))
+        self.assertEqual(frame['data'],bytes(range(256))*20)
+        self.assertEqual(frame['det']['people'][0]['center'],[155,125])
+        self.assertEqual(events[3][1]['state'],'head_down')
         self.assertIn(b'cam_test stop\n',s.sent)
-    def test_stream_rejects_corrupt_preview(self):
-        lines=self.stream_lines();i=lines.index(next(l for l in lines if l.startswith('PREVIEW_END')))
-        lines[i]='PREVIEW_END 2 38400 00000000'
+    def test_stream_writes_queued_commands_paced_and_logged(self):
+        import queue
+        q=queue.Queue();q.put(b'cam_test snap\n');q.put(b'cam_test pose {"seq":2}\n');stop=threading.Event();logged=[]
+        class Slow(Serial):
+            def readline(self):
+                time.sleep(0.02);return super().readline()
+        s=Slow(self.stream_lines())
+        live.receive_stream(s,stop,lambda k,v:stop.set() if k=='stats' else None,90,diagnostic=logged.append,commands=q)
+        self.assertEqual(s.sent[:2],[b'cam_test snap\n',b'cam_test pose {"seq":2}\n'])
+        self.assertIn('HOST_TX cam_test snap',logged)
+    def test_rejected_command_is_a_warning_not_a_failure(self):
+        lines=self.stream_lines();lines.insert(1,'W (6625) cam_test: CAM_ERROR invalid_command argc=1 first=x')
+        stop=threading.Event();events=[]
+        def emit(kind,value):
+            events.append(kind)
+            if kind=='stats':stop.set()
+        live.receive_stream(Serial(lines),stop,emit,90)
+        self.assertIn('board_warning',events)
+        with self.assertRaisesRegex(RuntimeError,'rc=263'):
+            live.receive_stream(Serial(['E (1) cam_test: CAM_ERROR rc=263 reason=ESP_ERR_TIMEOUT']),threading.Event(),lambda *a:None,90)
+    def test_stream_rejects_corrupt_jpeg(self):
+        lines=self.stream_lines();i=lines.index(next(l for l in lines if l.startswith('JPEG_END')))
+        lines[i]=lines[i].rsplit(' ',1)[0]+' 00000000'
         with self.assertRaisesRegex(ValueError,'checksum'):
             live.receive_stream(Serial(lines),threading.Event(),lambda *a:None,90)
     def test_stream_unexpected_end_and_silence_are_errors(self):

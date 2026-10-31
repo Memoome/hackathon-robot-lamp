@@ -93,10 +93,34 @@ serial to run it instead of `cam_test capture`; it prints `DETECT_RESULT`
 instead of `POSE_RESULT`. `cam_test stream_start` keeps the camera streaming
 and prints one `DET {json}` line per frame (seq, board time, colour-conversion
 `prep_ms`, model `infer_ms`, `cycle_ms`, boxes and centres) until `cam_test
-stop`; `cam_test preview N` (0 = off) adds a 120x160 preview every N frames as
-`PREVIEW_BEGIN`/`CAM_DATA`/`PREVIEW_END`, sent from a separate task so
-detection continues during the transfer. `STREAM_STATS` reports valid/bad
-frames every 5 s. The web viewer's detection mode uses this stream. ESP-DL sources are referenced at
+stop`; `cam_test preview N` (0 = off) sends the full 240x320 frame as a JPEG every N
+frames (`JPEG_BEGIN {json}` / `JPEG_DATA <offset> <base64>` / `JPEG_END <seq>
+<bytes> <fnv32>`), encoded and sent from a separate task so detection
+continues; `cam_test snap` sends the next frame, `cam_test quality N` sets
+JPEG quality (10-95, default 80). `cam_test pose {json}` takes the PC's
+posture verdict and answers `POSE_RX {json}`; it is logged, not acted on.
+`STREAM_STATS` reports valid/bad frames every 5 s. Console input uses the UART
+driver (2 KB buffer) so commands are not lost while both cores are busy.
+
+The web viewer's detection mode uses this stream: each received JPEG runs
+YOLO26-pose on the PC (`host/pose_pc.py`), the posture rules in
+`host/posture_states.py` (head on desk, head down, head tilt, uneven
+shoulders, stretch; provisional thresholds against a personal calibration)
+produce a verdict that is shown on the picture and sent back to the board.
+`host/scene_test.py` scores detections per labelled scene (empty seat, near,
+far, posture changes, leave and return). Plan and measured numbers:
+`docs/VISION-POSE-ARCHITECTURE.md`.
+
+PC-side pose needs its own environment (not required for detection only):
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install "ultralytics>=8.4" opencv-python-headless pyserial
+.venv/bin/python -B pose/live/host/web_camera.py --port 8768
+```
+
+The first pose request downloads `yolo26s-pose.pt` into `pose/live/models/`
+(ignored by Git). Apple GPU (MPS) is used when available, else CPU. ESP-DL sources are referenced at
 `5acd1c9992af4afb0fa80c221a676982b11381b8` (see `../README.md`). Camera
 components `esp_video` and `esp_cam_sensor` were 2.2.0, manifest source revision
 `ac5d2ac96d63f5222cff77d90a4409fb0c3b8c76` in

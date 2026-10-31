@@ -3,6 +3,7 @@ import argparse
 import base64
 import collections
 import json
+import queue
 import signal
 import threading
 import time
@@ -12,7 +13,10 @@ from urllib.parse import urlsplit
 
 import camera_wire as wire
 import live_pose as live
+import pose_pc
 import posture
+import posture_states
+import scene_test
 
 PAGE = Path(__file__).resolve().parents[1] / 'web' / 'index.html'
 
@@ -28,12 +32,24 @@ def failure_message(error):
 
 
 class Camera:
-    def __init__(self, session=live.session, stream=live.stream_session):
+    def __init__(self, session=live.session, stream=live.stream_session, pose_runner=None):
         self.session = session
         self.stream = stream
+        self.pose_runner = pose_runner or pose_pc.PoseRunner()
         self.preview_every = 10
         self.reset_detections()
         self.lock = threading.RLock()
+        self.commands = queue.Queue()
+        self.pose_jobs = queue.Queue(maxsize=1)
+        self.classifier = posture_states.PostureClassifier()
+        self.pc_pose = None
+        self.pose_rx = None
+        self.pose_error = None
+        self.board_warning = None
+        self.pose_sent = {}
+        self.image_mime = 'image/png'
+        self.scenes = scene_test.SceneRecorder()
+        threading.Thread(target=self.pose_loop, daemon=True).start()
         self.worker = None
         self.cancel = threading.Event()
         self.active = False
@@ -61,6 +77,8 @@ class Camera:
         self.dets = collections.deque(maxlen=60)
         self.det_count = 0
         self.stats = None
+        # Smallest (host receive time - board result time) seen; maps board ms onto host seconds.
+        self.clock_offset = None
 
     def detection_status(self):
         dets = list(self.dets)
@@ -79,6 +97,17 @@ class Camera:
 
     def posture_status(self):
         with self.lock:
+            if self.mode == 'detect':
+                c = self.classifier
+                r = self.pc_pose['posture'] if self.pc_pose else None
+                age = None if not self.pc_pose else max(0, time.time()-self.pc_pose['updated'])
+                details = {k: posture_states.LEVELS[r['levels'][k]] for k in posture_states.PRIORITY} if r else {}
+                return dict(summary=r['message'] if r else '先开始查看，再点“校准坐姿”。姿态由电脑端 YOLO26 判断。',
+                            details=details, frame_id=r['seq'] if r else None, age=age,
+                            labels={k: posture_states.LABELS[k] for k in posture_states.PRIORITY},
+                            calibrating=c.calibrating, calibrated=c.baseline is not None, baseline=c.baseline,
+                            state=r['state'] if r else None, level=r['level'] if r else None,
+                            stale=age is not None and (not self.active or age > 30))
             age = None if self.posture['updated'] is None else max(0, time.time()-self.posture['updated'])
             return dict(self.posture, labels=posture.LABELS, age=age,
                         calibrating=self.monitor.calibrating,
@@ -90,8 +119,9 @@ class Camera:
         with self.lock:
             if not self.active:
                 raise ValueError('请先开始查看，再校准坐姿。')
-            if self.mode != 'pose':
-                raise ValueError('人体检测模式没有关键点，不能校准坐姿。')
+            if self.mode == 'detect':
+                self.classifier.start_calibration()
+                return
             self.monitor.start_calibration()
             self.set_posture(f'校准中：请保持舒适坐姿，等待 {self.monitor.calibration_samples} 次有效结果。')
 
@@ -112,7 +142,10 @@ class Camera:
                         frame_id=self.frame['id'] if self.frame else None,
                         width=self.frame['w'] if self.frame else None,
                         height=self.frame['h'] if self.frame else None,
-                        posture=self.posture_status())
+                        posture=self.posture_status(),
+                        pc_pose={k: v for k, v in self.pc_pose.items() if k != 'image'} if self.pc_pose else None,
+                        pose_rx=self.pose_rx, pose_error=self.pose_error, board_warning=self.board_warning,
+                        scene=self.scenes.status())
 
     def emit(self, kind, value):
         with self.lock:
@@ -123,26 +156,30 @@ class Camera:
                 if self.cancel.is_set():
                     return
                 self.dets.append(value)
+                self.scenes.on_det(value)
                 self.det_count += 1
                 self.pose_result = value
                 self.inference_ms = value['infer_ms']
+                if 'host_rx' in value:
+                    est = value['host_rx'] - (value['t_ms'] + value['prep_ms'] + value['infer_ms']) / 1000
+                    self.clock_offset = est if self.clock_offset is None else min(self.clock_offset, est)
                 self.phase = 'streaming'
-                self.message = '板端连续检测中；预览图按设定间隔更新。' if self.preview_every else '板端连续检测中；预览图已关闭。'
+                self.message = '板端连续检测中；画面按设定间隔传到电脑做姿态推理。' if self.preview_every else '板端连续检测中；画面传输已关闭。'
             elif kind == 'stats':
                 self.stats = value
-            elif kind == 'preview':
+            elif kind == 'jpeg':
                 if self.cancel.is_set():
                     return
-                now = time.time()
-                self.interval = None if self.count == 0 else now-self.updated
-                self.frame = value
-                self.png = wire.png(value['rgb'], value['w'], value['h'])
-                annotated = wire.png(live.overlay(value), value['w'], value['h'])
-                self.raw_image_url = 'data:image/png;base64,' + base64.b64encode(self.png).decode()
-                self.image_url = 'data:image/png;base64,' + base64.b64encode(annotated).decode()
-                self.updated = now
-                self.version += 1
-                self.count += 1
+                try:
+                    self.pose_jobs.get_nowait()
+                except queue.Empty:
+                    pass
+                self.pose_jobs.put_nowait(value)
+            elif kind == 'pose_rx':
+                sent = self.pose_sent.get(value.get('seq'))
+                self.pose_rx = dict(value, ack_ms=round((time.monotonic()-sent)*1000, 1) if sent else None)
+            elif kind == 'board_warning':
+                self.board_warning = value
             elif kind == 'frame':
                 if self.cancel.is_set():
                     return
@@ -175,6 +212,79 @@ class Camera:
                 self.phase = 'streaming'
                 self.message = '画面与推理结果已同步，正在采集下一帧。'
 
+    def pose_loop(self):
+        """Runs PC-side pose on the newest board JPEG; older frames waiting here are dropped."""
+        while True:
+            frame = self.pose_jobs.get()
+            try:
+                res = self.pose_runner.run(frame['data'], frame['rotation'])
+            except Exception as exc:
+                with self.lock:
+                    self.pose_error = f'电脑端姿态推理失败：{exc}'
+                continue
+            done = time.monotonic()
+            with self.lock:
+                if self.cancel.is_set() or not self.active:
+                    continue
+                det = frame.get('det') or next((d for d in self.dets if d['seq'] == frame['seq']), None)
+                board_people = det['people'] if det else []
+                idx = pose_pc.match_person(res['people'], board_people)
+                person = res['people'][idx] if idx is not None else None
+                verdict = self.classifier.update(person, len(res['people']), res['width'], res['height'], done, frame['seq'])
+                self.scenes.on_pose(frame['seq'], verdict, idx is not None)
+                capture = None if self.clock_offset is None else frame['t_ms'] / 1000 + self.clock_offset
+                def ms(a, b):
+                    return None if a is None or b is None else round(max(0.0, b - a) * 1000, 1)
+                now = time.time()
+                self.interval = None if not self.pc_pose else now - self.pc_pose['updated']
+                self.pc_pose = dict(seq=frame['seq'], reason=frame.get('reason'), people=res['people'], main=idx,
+                                    board_people=board_people, width=res['width'], height=res['height'],
+                                    infer_ms=res['infer_ms'], decode_ms=res['decode_ms'], model=res['model'],
+                                    device=res['device'], jpeg_bytes=frame['bytes'], enc_ms=frame.get('enc_ms'),
+                                    quality=frame.get('quality'), board_to_pc_ms=ms(capture, frame['host_rx']),
+                                    pc_ms=ms(frame['host_rx'], done), end_to_end_ms=ms(capture, done),
+                                    posture=verdict, updated=now)
+                self.pose_error = None
+                if res['image_jpeg']:
+                    self.png = res['image_jpeg']
+                    self.image_mime = 'image/jpeg'
+                    self.raw_image_url = self.image_url = 'data:image/jpeg;base64,' + base64.b64encode(self.png).decode()
+                self.frame = {'id': frame['seq'], 'w': res['width'], 'h': res['height']}
+                self.updated = now
+                self.version += 1
+                self.count += 1
+                self.pose_sent[frame['seq']] = time.monotonic()
+                for old in [k for k in self.pose_sent if k < frame['seq'] - 200]:
+                    del self.pose_sent[old]
+                self.commands.put(posture_states.board_message(verdict).encode())
+
+    def scene(self, data):
+        action = data.get('action')
+        with self.lock:
+            if action == 'start':
+                if not self.active or self.mode != 'detect':
+                    raise ValueError('请先在人体检测模式下开始查看。')
+                self.scenes.start(data.get('scene'))
+            elif action == 'end':
+                self.scenes.end()
+            elif action == 'mark':
+                self.scenes.mark(data.get('event'))
+            elif action == 'reset':
+                self.scenes.reset()
+            elif action == 'save':
+                if not self.scenes.records:
+                    raise ValueError('还没有录制任何场景。')
+                path = self.scenes.save(live.ROOT / 'evidence', f'preview_every={self.preview_every} rotation={self.rotation}')
+                return path.name
+            else:
+                raise ValueError('未知操作。')
+
+    def snap(self):
+        with self.lock:
+            if not self.active or self.mode != 'detect':
+                raise ValueError('请先在人体检测模式下开始查看。')
+            self.commands.put(b'cam_test snap\n')
+
     def start(self, rotation=90, mode='pose', preview_every=10):
         if type(rotation) is not int or rotation not in (0, 90, 180, 270):
             raise ValueError('方向只能是 0、90、180 或 270 度。')
@@ -198,8 +308,13 @@ class Camera:
             self.pending_frame = None
             self.interval = self.inference_ms = None
             self.monitor.reset()
-            self.set_posture('请坐稳并点击“校准坐姿”；重新开始后需要重新校准。' if mode == 'pose'
-                             else '人体检测模式只输出人体框，不做坐姿判断。')
+            self.classifier.reset()
+            self.pc_pose = self.pose_rx = self.pose_error = self.board_warning = None
+            self.pose_sent = {}
+            for q in (self.commands, self.pose_jobs):
+                while not q.empty():
+                    q.get_nowait()
+            self.set_posture('请坐稳并点击“校准坐姿”；重新开始后需要重新校准。')
             self.last_seen = time.monotonic()
             self.worker = threading.Thread(target=self.run, daemon=True)
             self.worker.start()
@@ -208,7 +323,8 @@ class Camera:
     def run(self):
         try:
             if self.mode == 'detect':
-                self.stream(self.cancel, self.emit, rotation=self.rotation, preview_every=self.preview_every)
+                self.stream(self.cancel, self.emit, rotation=self.rotation, preview_every=self.preview_every,
+                            commands=self.commands)
             else:
                 self.session(self.cancel, self.emit, rotation=self.rotation, count=0, save=False, mode=self.mode)
         except Exception as exc:
@@ -239,7 +355,7 @@ class Camera:
 
     def image(self):
         with self.lock:
-            return self.png
+            return self.png, self.image_mime
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -257,7 +373,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; frame-ancestors 'none'")
         if download:
-            self.send_header('Content-Disposition', 'attachment; filename="camera-frame.png"')
+            ext = 'jpg' if kind == 'image/jpeg' else 'png'
+            self.send_header('Content-Disposition', f'attachment; filename="camera-frame.{ext}"')
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -280,10 +397,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/posture':
             return self.reply(200, self.server.camera.posture_status())
         if path in ('/frame.png', '/snapshot.png'):
-            image = self.server.camera.image()
+            image, mime = self.server.camera.image()
             if image is None:
                 return self.reply(404, {'error': '尚未收到校验通过的新画面。'})
-            return self.reply(200, image, 'image/png', download=path == '/snapshot.png')
+            return self.reply(200, image, mime, download=path == '/snapshot.png')
         return self.reply(404, {'error': 'Not found'})
 
     def do_POST(self):
@@ -309,6 +426,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/calibrate':
                 self.server.camera.calibrate()
                 return self.reply(200, self.server.camera.status())
+            if path == '/api/snap':
+                self.server.camera.snap()
+                return self.reply(200, self.server.camera.status())
+            if path == '/api/scene':
+                saved = self.server.camera.scene(data)
+                return self.reply(200, dict(self.server.camera.status(), saved=saved))
             return self.reply(404, {'error': 'Not found'})
         except (ValueError, TypeError) as exc:
             return self.reply(400, {'error': str(exc)})

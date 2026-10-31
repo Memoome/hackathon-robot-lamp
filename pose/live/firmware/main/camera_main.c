@@ -8,12 +8,15 @@
 #include "driver/gpio.h"
 #include "driver/gpio_filter.h"
 #include "driver/spi_master.h"
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
 #include "esp_cam_ctlr_spi.h"
 #include "esp_cam_sensor_xclk.h"
 #include "esp_video_init.h"
 #include "esp_video_device.h"
 #include "esp_video_ioctl.h"
 #include "esp_heap_caps.h"
+#include "esp_jpeg_enc.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,11 +42,19 @@ static uint32_t width,height,fourcc;
 static gpio_glitch_filter_handle_t vsync_filter;
 // BF3901 stores this format pointer; it must outlive every capture.
 static esp_cam_sensor_format_t sensor_format;
-#define THUMB_BYTES (120*160*2)
-static volatile int preview_every,preview_busy;
-static uint8_t *preview_data;
+#define FRAME_BYTES (240*320*2)
+#define JPEG_OUT_BYTES (64*1024)
+#define JPEG_CHUNK 144
+static volatile int preview_every,preview_busy,snap_request,jpeg_quality=80;
+static uint8_t *jpeg_in,*jpeg_out;
 static unsigned preview_seq;
+static int64_t preview_t_ms;
+static const char *preview_reason;
+static jpeg_enc_handle_t jpeg_enc;
+static int jpeg_enc_quality;
 static TaskHandle_t preview_task_handle;
+static unsigned pose_seq,pose_count;
+static char pose_state[24]="none",pose_level[12]="none";
 
 static void status(void)
 {
@@ -119,19 +130,83 @@ static void send_hex(const uint8_t *data,uint32_t n)
     }
 }
 
-// Sends stream previews on its own task so detection keeps running during the transfer.
+static int base64(const uint8_t *in,int n,char *out)
+{
+    static const char t[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int o=0;
+    for(int i=0;i<n;i+=3) {
+        uint32_t v=(uint32_t)in[i]<<16|(i+1<n?in[i+1]<<8:0)|(i+2<n?in[i+2]:0);
+        out[o++]=t[v>>18&63];out[o++]=t[v>>12&63];
+        out[o++]=i+1<n?t[v>>6&63]:'=';out[o++]=i+2<n?t[v&63]:'=';
+    }
+    out[o]=0;
+    return o;
+}
+
+static int jpeg_ready(void)
+{
+    if(jpeg_enc && jpeg_enc_quality==jpeg_quality) return 1;
+    if(jpeg_enc){jpeg_enc_close(jpeg_enc);jpeg_enc=NULL;}
+    jpeg_enc_config_t c=DEFAULT_JPEG_ENC_CONFIG();
+    c.width=width;c.height=height;
+    c.src_type=fourcc==V4L2_PIX_FMT_UYVY?JPEG_PIXEL_FORMAT_CbYCrY:JPEG_PIXEL_FORMAT_YCbYCr;
+    c.subsampling=JPEG_SUBSAMPLE_420;c.quality=jpeg_quality;
+    if(jpeg_enc_open(&c,&jpeg_enc)!=JPEG_ERR_OK){jpeg_enc=NULL;return 0;}
+    jpeg_enc_quality=jpeg_quality;
+    return 1;
+}
+
+// Encodes and sends full-frame JPEGs on its own task so detection keeps running during the transfer.
 static void preview_task(void *arg)
 {
     (void)arg;
     for(;;) {
         ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
-        uint32_t hash=fnv32(preview_data,THUMB_BYTES);
-        out_line("PREVIEW_BEGIN %u %u 120 160 UYVY %08lx\r\n",preview_seq,THUMB_BYTES,(unsigned long)hash);
-        send_hex(preview_data,THUMB_BYTES);
-        if(cancelled)out_line("PREVIEW_ABORT %u\r\n",preview_seq);
-        else out_line("PREVIEW_END %u %u %08lx\r\n",preview_seq,THUMB_BYTES,(unsigned long)hash);
+        if(!jpeg_ready()){out_line("JPEG_ERROR seq=%u reason=open\r\n",preview_seq);preview_busy=0;continue;}
+        int64_t start=esp_timer_get_time();
+        int size=0;
+        jpeg_error_t e=jpeg_enc_process(jpeg_enc,jpeg_in,FRAME_BYTES,jpeg_out,JPEG_OUT_BYTES,&size);
+        double enc_ms=(esp_timer_get_time()-start)/1000.0;
+        if(e!=JPEG_ERR_OK || size<=0){out_line("JPEG_ERROR seq=%u reason=encode rc=%d\r\n",preview_seq,(int)e);preview_busy=0;continue;}
+        uint32_t hash=fnv32(jpeg_out,size);
+        out_line("JPEG_BEGIN {\"seq\":%u,\"t_ms\":%lld,\"w\":%lu,\"h\":%lu,\"bytes\":%d,\"fnv32\":\"%08lx\",\"quality\":%d,\"enc_ms\":%.1f,\"reason\":\"%s\"}\r\n",
+                 preview_seq,(long long)preview_t_ms,(unsigned long)width,(unsigned long)height,size,(unsigned long)hash,jpeg_enc_quality,enc_ms,preview_reason);
+        char b64[JPEG_CHUNK/3*4+1];
+        int lines=0;
+        for(int off=0;off<size && !cancelled;off+=JPEG_CHUNK) {
+            int n=size-off<JPEG_CHUNK?size-off:JPEG_CHUNK;
+            base64(jpeg_out+off,n,b64);
+            out_line("JPEG_DATA %d %s\r\n",off,b64);
+            if(!(++lines%16))vTaskDelay(1);
+        }
+        if(cancelled)out_line("JPEG_ABORT %u\r\n",preview_seq);
+        else out_line("JPEG_END %u %d %08lx\r\n",preview_seq,size,(unsigned long)hash);
         preview_busy=0;
     }
+}
+
+// cam_test pose {"seq":..,"state":"..","level":".."} from the PC; values are logged, not acted on yet.
+static void pose_command(const char *json)
+{
+    const char *keys[]={"\"state\":\"","\"level\":\""};
+    char *dest[]={pose_state,pose_level};
+    size_t caps[]={sizeof(pose_state),sizeof(pose_level)};
+    const char *s=strstr(json,"\"seq\":");
+    if(!s){ESP_LOGW(TAG,"CAM_ERROR pose_format");return;}
+    unsigned seq=(unsigned)strtoul(s+6,NULL,10);
+    for(int i=0;i<2;i++) {
+        const char *p=strstr(json,keys[i]);
+        if(!p){ESP_LOGW(TAG,"CAM_ERROR pose_format");return;}
+        p+=strlen(keys[i]);
+        size_t n=0;
+        while(p[n] && p[n]!='"' && n<caps[i]-1)n++;
+        memcpy(dest[i],p,n);dest[i][n]=0;
+    }
+    int stale=pose_count && seq<pose_seq;
+    if(!stale)pose_seq=seq;
+    ++pose_count;
+    out_line("POSE_RX {\"seq\":%u,\"state\":\"%s\",\"level\":\"%s\",\"stale\":%d,\"count\":%u,\"latest_seq\":%u}\r\n",
+             seq,pose_state,pose_level,stale,pose_count,sequence);
 }
 
 static esp_err_t stream(void)
@@ -165,6 +240,7 @@ static esp_err_t stream(void)
     int type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if(ioctl(fd,VIDIOC_STREAMON,&type)!=0){err=ESP_FAIL;goto done;}
     streaming=1;
+    snap_request=0;
     ESP_LOGI(TAG,"STREAM_START width=%lu height=%lu fourcc=%08lx preview_every=%d warmup_frames=3",(unsigned long)width,(unsigned long)height,(unsigned long)fourcc,preview_every);
     int warm=0;
     unsigned valid=0,bad=0,dq_fail=0,dets=0,previews=0,skipped=0;
@@ -187,11 +263,16 @@ static esp_err_t stream(void)
             else {
                 const uint8_t *src=buffers[b.index];
                 ++sequence;
-                if(preview_every>0 && sequence%preview_every==0) {
+                int want_snap=snap_request,want_preview=preview_every>0 && sequence%preview_every==0;
+                if(want_snap || want_preview) {
+                    // A pending snap stays requested until the encoder is free.
                     if(preview_busy) ++skipped;
                     else {
-                        make_thumb(src,preview_data);
-                        preview_seq=sequence;preview_busy=1;++previews;
+                        memcpy(jpeg_in,src,FRAME_BYTES);
+                        preview_seq=sequence;preview_t_ms=last_valid/1000;
+                        preview_reason=want_snap?"snap":"preview";
+                        if(want_snap)snap_request=0;
+                        preview_busy=1;++previews;
                         xTaskNotifyGive(preview_task_handle);
                     }
                 }
@@ -338,6 +419,18 @@ static void command(char *out,int len,int argc,char **argv)
         else ESP_LOGW(TAG,"CAM_ERROR preview_range");
         return;
     }
+    if(argc==3 && !strcmp(argv[1],"quality")) {
+        char *end=NULL;long n=strtol(argv[2],&end,10);
+        if(end && !*end && n>=10 && n<=95){jpeg_quality=(int)n;ESP_LOGI(TAG,"LIVE_JPEG_QUALITY %d",jpeg_quality);}
+        else ESP_LOGW(TAG,"CAM_ERROR quality_range");
+        return;
+    }
+    if(argc==2 && !strcmp(argv[1],"snap")) {
+        if(!busy){ESP_LOGW(TAG,"CAM_ERROR snap_needs_stream");return;}
+        snap_request=1;ESP_LOGI(TAG,"LIVE_SNAP requested");
+        return;
+    }
+    if(argc==3 && !strcmp(argv[1],"pose")){pose_command(argv[2]);return;}
     int job=argc!=2?0:!strcmp(argv[1],"probe")?1:!strcmp(argv[1],"capture")?2:!strcmp(argv[1],"detect")?3:!strcmp(argv[1],"stream_start")?4:0;
     if(!job){ESP_LOGW(TAG,"CAM_ERROR invalid_command");return;}
     portENTER_CRITICAL(&mux);int reject=busy;if(!reject){busy=1;cancelled=0;}portEXIT_CRITICAL(&mux);
@@ -361,16 +454,22 @@ void app_main(void)
     ESP_LOGI(TAG, "VSYNC_FILTER gpio=4 enabled=1 window=fixed_two_iomux_cycles");
     if(pose_engine_init()!=ESP_OK) {ESP_LOGE(TAG,"LIVE_ERROR model_init");return;}
     if(detect_engine_init()!=ESP_OK) {ESP_LOGE(TAG,"LIVE_ERROR detect_model_init");return;}
-    preview_data=heap_caps_malloc(THUMB_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-    if(!preview_data || xTaskCreate(preview_task,"preview",4096,NULL,3,&preview_task_handle)!=pdPASS) {
+    jpeg_in=jpeg_calloc_align(FRAME_BYTES,16);
+    jpeg_out=heap_caps_malloc(JPEG_OUT_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!jpeg_in || !jpeg_out || xTaskCreate(preview_task,"preview",6144,NULL,3,&preview_task_handle)!=pdPASS) {
         ESP_LOGE(TAG,"CAM_ERROR preview_init"); return;
     }
     jobs=xQueueCreate(1,sizeof(int));
     if(!jobs || xTaskCreate(worker,"camera_test",8192,NULL,6,NULL)!=pdPASS) {
         ESP_LOGE(TAG,"CAM_ERROR task_init"); return;
     }
+    // Without the driver, stdin reads the 128-byte UART FIFO directly and drops bytes
+    // whenever this low-priority task is starved by detection and JPEG encoding.
+    if(uart_driver_install(CONFIG_ESP_CONSOLE_UART_NUM,2048,0,0,NULL,0)==ESP_OK)
+        uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+    else ESP_LOGW(TAG,"LIVE_WARN console_rx_driver");
     ESP_LOGI(TAG,"LIVE_READY model=YOLO11N_S3_V1 baud=%d capture=OFF no_motor=1 no_audio=1 no_network=1 psram=%u", CONFIG_ESP_CONSOLE_UART_BAUDRATE,(unsigned)esp_psram_get_size());
-    char line[80]; unsigned used=0; int overflow=0;
+    char line[512]; unsigned used=0; int overflow=0;
     for(;;) {
         int c=getchar();
         if(c==EOF) {clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(10));continue;}
@@ -380,7 +479,7 @@ void app_main(void)
                 char *save=NULL; char *argv[3]; int argc=0;
                 for(char *p=strtok_r(line," ", &save);p && argc<3;p=strtok_r(NULL," ",&save)) argv[argc++]=p;
                 if(argc>=2 && !strcmp(argv[0],"cam_test")) command(NULL,0,argc,argv);
-                else ESP_LOGW(TAG,"CAM_ERROR invalid_command");
+                else ESP_LOGW(TAG,"CAM_ERROR invalid_command argc=%d first=%.24s",argc,argc?argv[0]:"");
             }
             used=0;overflow=0;
         } else if(used<sizeof(line)-1) line[used++]=(char)c;

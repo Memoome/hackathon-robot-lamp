@@ -1,5 +1,6 @@
 """Continuous, request-driven ESP32-S3 inference viewer. Inference runs on the board."""
 import argparse
+import base64
 from datetime import datetime
 import json
 from pathlib import Path
@@ -165,12 +166,21 @@ def set_rotation(s,rotation,diagnostic):
         if 'CAM_ERROR' in line:raise RuntimeError(line)
     raise RuntimeError('方向设置未确认')
 
-def receive_stream(s,stop,emit,rotation,diagnostic=None,idle_timeout=5):
-    """Continuous detections plus optional previews until stop; returns after CAM_DONE."""
-    recent={};preview=None;sent_stop=False
-    last=time.monotonic();stop_deadline=None
+def receive_stream(s,stop,emit,rotation,diagnostic=None,idle_timeout=5,commands=None):
+    """Continuous detections plus optional JPEG frames until stop; returns after CAM_DONE.
+
+    `commands` is an optional queue of complete command lines (bytes) to write to the board."""
+    recent={};jpeg=None;sent_stop=False
+    last=time.monotonic();stop_deadline=None;last_tx=0.0
     while True:
         now=time.monotonic()
+        # One command per 30 ms so a burst never overruns the board's console input.
+        if commands is not None and not sent_stop and now-last_tx>=0.03:
+            try:
+                cmd=commands.get_nowait()
+                s.write(cmd);last_tx=now
+                if diagnostic is not None:diagnostic('HOST_TX '+cmd.decode('ascii','replace').strip())
+            except queue.Empty:pass
         if stop.is_set() and not sent_stop:
             s.write(b'cam_test stop\n');sent_stop=True;stop_deadline=now+10
         if sent_stop and now>stop_deadline:raise TimeoutError('停止后 10 秒内未确认结束')
@@ -183,39 +193,45 @@ def receive_stream(s,stop,emit,rotation,diagnostic=None,idle_timeout=5):
         check_board_error(line)
         if line.startswith('DET '):
             det=validate_det(json.loads(line[4:]),rotation)
-            last=time.monotonic()
+            last=det['host_rx']=time.monotonic()
             recent[det['seq']]=det
             for old in [k for k in recent if k<det['seq']-60]:del recent[old]
             if not stop.is_set():emit('det',det)
-        elif line.startswith('PREVIEW_BEGIN '):
-            m=re.fullmatch(r'PREVIEW_BEGIN (\d+) (\d+) (\d+) (\d+) UYVY ([0-9a-fA-F]{8})',line)
-            if not m or tuple(map(int,m.groups()[1:4]))!=(38400,120,160):raise ValueError('Invalid preview header')
-            preview=dict(seq=int(m[1]),hash=int(m[5],16),data=bytearray())
-        elif line.startswith('CAM_DATA '):
-            if preview is None:continue
-            _,off,payload=line.split();block=bytes.fromhex(payload)
-            if int(off)!=len(preview['data']) or not 0<len(block)<=96 or len(preview['data'])+len(block)>38400:raise ValueError('Preview offset/length error')
-            preview['data'].extend(block)
-        elif line.startswith('PREVIEW_END '):
+        elif line.startswith('JPEG_BEGIN '):
+            head=json.loads(line[len('JPEG_BEGIN '):])
+            if not isinstance(head.get('seq'),int) or not 0<head.get('bytes',0)<=65536 or (head.get('w'),head.get('h'))!=(240,320):
+                raise ValueError('Invalid JPEG header')
+            jpeg=dict(head,data=bytearray())
+        elif line.startswith('JPEG_DATA '):
+            if jpeg is None:continue
+            _,off,payload=line.split()
+            block=base64.b64decode(payload,validate=True)
+            if int(off)!=len(jpeg['data']) or not 0<len(block)<=144 or len(jpeg['data'])+len(block)>jpeg['bytes']:raise ValueError('JPEG offset/length error')
+            jpeg['data'].extend(block)
+        elif line.startswith('JPEG_END '):
             _,seq,n,check=line.split()
-            if preview is None or int(seq)!=preview['seq'] or int(n)!=38400 or len(preview['data'])!=38400 or int(check,16)!=preview['hash'] or wire.fnv(preview['data'])!=preview['hash']:
-                raise ValueError('Preview checksum failed')
-            data=bytes(preview['data']);seq=preview['seq'];preview=None
-            frame={'id':seq,'rotation':rotation,'raw':data,'fnv32':f'{wire.fnv(data):08x}'}
-            frame['rgb'],frame['w'],frame['h']=orient(wire.decode_uyvy(data,120,160),120,160,rotation)
-            frame['result']=recent.get(seq)
-            if not stop.is_set():emit('preview',frame)
-        elif line.startswith('PREVIEW_ABORT '):
-            preview=None
+            if jpeg is None or int(seq)!=jpeg['seq'] or int(n)!=jpeg['bytes'] or len(jpeg['data'])!=jpeg['bytes'] or wire.fnv(jpeg['data'])!=int(check,16) or check.lower()!=jpeg['fnv32']:
+                raise ValueError('JPEG checksum failed')
+            frame=dict(jpeg,data=bytes(jpeg['data']),rotation=rotation,host_rx=time.monotonic(),det=recent.get(jpeg['seq']))
+            jpeg=None
+            if not stop.is_set():emit('jpeg',frame)
+        elif line.startswith('JPEG_ABORT ') or line.startswith('JPEG_ERROR '):
+            jpeg=None
+            if line.startswith('JPEG_ERROR ') and not stop.is_set():emit('board_warning',line)
+        elif line.startswith('POSE_RX '):
+            if not stop.is_set():emit('pose_rx',json.loads(line[len('POSE_RX '):]))
         elif line.startswith('STREAM_STATS '):
             if not stop.is_set():emit('stats',json.loads(line[len('STREAM_STATS '):]))
         elif 'CAM_DONE ' in line:
             if sent_stop:return
             raise RuntimeError('板端连续检测意外结束：'+line)
-        elif 'CAM_ERROR' in line and not sent_stop:
+        elif 'CAM_ERROR rc=' in line and not sent_stop:
             raise RuntimeError(line)
+        elif 'CAM_ERROR' in line and not stop.is_set():
+            # A rejected command (invalid_command, pose_format, busy…) does not end the stream.
+            emit('board_warning',line)
 
-def stream_session(stop,emit,rotation=90,preview_every=10):
+def stream_session(stop,emit,rotation=90,preview_every=10,commands=None):
     if type(preview_every) is not int or not 0<=preview_every<=1000:raise ValueError('Invalid preview interval')
     (ROOT/'evidence').mkdir(exist_ok=True)
     log_path=ROOT/'evidence'/('serial-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.log')
@@ -230,7 +246,7 @@ def stream_session(stop,emit,rotation=90,preview_every=10):
         s.write(b'cam_test stream_start\n')
         emit('status','已连接。板端正在连续检测…')
         try:
-            receive_stream(s,stop,emit,rotation,diagnostic)
+            receive_stream(s,stop,emit,rotation,diagnostic,commands=commands)
         finally:
             pending_error=sys.exc_info()[0] is not None
             try:
