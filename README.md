@@ -55,6 +55,8 @@ Servos use a suitable separate regulated5V supply with ground shared with the bo
 
 ## Teammates: build on this
 
+**Anyone can contribute:** [fork this repository](https://github.com/Memoome/hackathon-robot-lamp/fork), add or upload your code in your fork, then open a pull request back to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the exact steps. Direct pushes require an invitation from the owner for your GitHub username.
+
 Fork the repository, create a branch, make changes and open a pull request. Suggested work areas:
 
 1. **Motion/hardware:** calibrate physical poses, inspect preview, then validate clearance/load and tune gestures.
