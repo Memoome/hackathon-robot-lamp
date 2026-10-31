@@ -1,445 +1,451 @@
 {
   "profile": "Lamp Cardboard Prototype",
-  "calibration_sha256": "1bc01303b9f1839206128df34966b670007292b0af6c9cfe5c08ed8e3629a583",
   "hardware_tested": false,
   "actions": {
     "Slump": {
-      "estimated_seconds": 21.29,
+      "estimated_seconds": 4.95,
       "rows": [
         {
-          "name": "Find a comfortable rest",
+          "name": "Left-facing home",
           "pulse": [
             1000,
-            600,
-            1500
+            1682,
+            1101
           ],
-          "seconds": 1.1,
-          "pause": 0.15,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0,
-            0
-          ]
-        },
-        {
-          "name": "Eyelids heavy \u00b7 head sinks first",
-          "pulse": [
-            1000,
-            600,
-            1400
-          ],
-          "seconds": 0.75,
+          "seconds": 0.12,
           "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Body gives in \u00b7 head follows",
+          "name": "Oh\u2026 \u00b7 the face loses its energy",
           "pulse": [
-            895,
-            585,
-            1390
+            1000,
+            1682,
+            1345
           ],
-          "seconds": 1.8,
-          "pause": 1.0,
+          "seconds": 0.4,
+          "pause": 0,
           "sound": 0,
           "easing": "quintic",
           "delays": [
-            0.12,
             0,
-            0.2
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "A small effort to straighten",
+          "name": "Body gives in \u00b7 curl inward and down",
           "pulse": [
-            914,
-            588,
-            1410
+            970,
+            1487,
+            1358
           ],
-          "seconds": 0.85,
-          "pause": 0.2,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0,
-            0
-          ]
-        },
-        {
-          "name": "Soft sigh \u00b7 settle back",
-          "pulse": [
-            895,
-            585,
-            1390
-          ],
-          "seconds": 1.05,
-          "pause": 0.55,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0,
-            0
-          ]
-        },
-        {
-          "name": "Notice you \u00b7 lift the face",
-          "pulse": [
-            895,
-            585,
-            1467
-          ],
-          "seconds": 0.85,
-          "pause": 0.2,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0,
-            0
-          ]
-        },
-        {
-          "name": "Recover \u00b7 body follows the face",
-          "pulse": [
-            1000,
-            600,
-            1500
-          ],
-          "seconds": 1.9,
-          "pause": 0.15,
+          "seconds": 0.95,
+          "pause": 0.45,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0.12,
             0,
-            0
-          ]
+            0.18
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Thank-you nod",
+          "name": "Heavy head \u00b7 one last sag",
+          "pulse": [
+            970,
+            1487,
+            1425
+          ],
+          "seconds": 0.3,
+          "pause": 0.2,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
+            0,
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
+        },
+        {
+          "name": "A reluctant effort to look up",
+          "pulse": [
+            979,
+            1546,
+            1281
+          ],
+          "seconds": 0.45,
+          "pause": 0.12,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
+            0,
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
+        },
+        {
+          "name": "Recover \u00b7 lift the body with relief",
           "pulse": [
             1000,
-            600,
-            1456
+            1682,
+            1101
           ],
-          "seconds": 0.55,
+          "seconds": 0.95,
+          "pause": 0,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
+            0.08,
+            0,
+            0.12
+          ],
+          "gesture_speed": 600
+        },
+        {
+          "name": "A grateful little nod",
+          "pulse": [
+            1000,
+            1682,
+            1157
+          ],
+          "seconds": 0.24,
           "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
           "name": "Back with you",
           "pulse": [
             1000,
-            600,
-            1500
+            1682,
+            1101
           ],
-          "seconds": 0.8,
-          "pause": 0.3,
-          "sound": 1,
+          "seconds": 0.3,
+          "pause": 0,
+          "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         }
       ]
     },
     "Water": {
-      "estimated_seconds": 19.84,
+      "estimated_seconds": 4.61,
       "rows": [
         {
-          "name": "Find a comfortable rest",
+          "name": "Left-facing home",
           "pulse": [
             1000,
-            600,
-            1500
+            1682,
+            1101
           ],
-          "seconds": 1.1,
-          "pause": 0.15,
+          "seconds": 0.12,
+          "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Notice the bottle \u00b7 glance first",
+          "name": "Hey! \u00b7 quick glance toward the bottle",
           "pulse": [
             1000,
-            600,
-            1382
+            1682,
+            1212
           ],
-          "seconds": 0.65,
-          "pause": 0.2,
+          "seconds": 0.3,
+          "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Lean toward its fixed spot",
+          "name": "Reach out \u00b7 this is for you",
           "pulse": [
-            925,
-            540,
-            1382
+            1240,
+            1982,
+            1228
           ],
-          "seconds": 1.35,
-          "pause": 0.2,
-          "sound": -1,
+          "seconds": 0.85,
+          "pause": 0,
+          "sound": 4,
           "easing": "quintic",
           "delays": [
             0.12,
             0,
-            0
-          ]
+            0.06
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "There \u00b7 a gentle invitation",
+          "name": "There! \u00b7 first pointing nod",
           "pulse": [
-            925,
-            540,
-            1326
+            1240,
+            1982,
+            1395
           ],
-          "seconds": 0.55,
-          "pause": 0.2,
-          "sound": 4,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0,
-            0
-          ]
-        },
-        {
-          "name": "Offer, do not insist",
-          "pulse": [
-            925,
-            540,
-            1382
-          ],
-          "seconds": 0.8,
-          "pause": 1.4,
+          "seconds": 0.25,
+          "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Look back at you",
+          "name": "Look at the bottle",
           "pulse": [
-            925,
-            540,
-            1500
+            1240,
+            1982,
+            1228
           ],
-          "seconds": 0.8,
-          "pause": 0.15,
+          "seconds": 0.3,
+          "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
+        },
+        {
+          "name": "Yes, there \u00b7 a second smaller nod",
+          "pulse": [
+            1240,
+            1982,
+            1339
+          ],
+          "seconds": 0.24,
+          "pause": 0,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
             0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
+        },
+        {
+          "name": "Friendly invitation \u00b7 wait for you",
+          "pulse": [
+            1240,
+            1982,
+            1228
+          ],
+          "seconds": 0.3,
+          "pause": 0.35,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
+            0,
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
           "name": "Relax to rest",
           "pulse": [
             1000,
-            600,
-            1500
-          ],
-          "seconds": 1.65,
-          "pause": 0.3,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0.1,
-            0,
-            0
-          ]
-        }
-      ]
-    },
-    "Stretch": {
-      "estimated_seconds": 18.28,
-      "rows": [
-        {
-          "name": "Find a comfortable rest",
-          "pulse": [
-            1000,
-            600,
-            1500
-          ],
-          "seconds": 1.1,
-          "pause": 0.15,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0,
-            0
-          ]
-        },
-        {
-          "name": "Gather a little breath",
-          "pulse": [
-            970,
-            600,
-            1497
-          ],
-          "seconds": 0.8,
-          "pause": 0.2,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0,
-            0
-          ]
-        },
-        {
-          "name": "Breathe in \u00b7 face rises first",
-          "pulse": [
-            970,
-            600,
-            1479
+            1682,
+            1101
           ],
           "seconds": 0.85,
           "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
+            0.1,
             0,
+            0.05
+          ],
+          "gesture_speed": 600
+        }
+      ]
+    },
+    "Stretch": {
+      "estimated_seconds": 4.54,
+      "rows": [
+        {
+          "name": "Left-facing home",
+          "pulse": [
+            1000,
+            1682,
+            1101
+          ],
+          "seconds": 0.12,
+          "pause": 0,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
             0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Unfold slowly \u00b7 reach upward",
+          "name": "Gather a breath \u00b7 small crouch",
           "pulse": [
-            1135,
-            570,
-            1479
+            1000,
+            1637,
+            1112
           ],
-          "seconds": 2.4,
-          "pause": 1.6,
+          "seconds": 0.4,
+          "pause": 0,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
+            0,
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
+        },
+        {
+          "name": "Unfold slowly \u00b7 reach high and open",
+          "pulse": [
+            1015,
+            1997,
+            923
+          ],
+          "seconds": 1.1,
+          "pause": 0.4,
           "sound": 6,
           "easing": "quintic",
           "delays": [
             0.08,
             0,
-            0.18
-          ]
+            0.15
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Enjoy the stretch \u00b7 soften the head",
+          "name": "Aah \u00b7 lift the face into the stretch",
           "pulse": [
-            1124,
-            572,
-            1481
+            1015,
+            1997,
+            867
           ],
-          "seconds": 1.0,
-          "pause": 0.5,
+          "seconds": 0.3,
+          "pause": 0.3,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Breathe out \u00b7 let the links relax",
+          "name": "Breathe out \u00b7 release the whole body",
           "pulse": [
-            1061,
-            586,
-            1491
+            1007,
+            1824,
+            1021
           ],
-          "seconds": 1.6,
+          "seconds": 0.7,
           "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0.1,
-            0.2
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
-          "name": "Settle without snapping back",
+          "name": "Settle softly after the stretch",
           "pulse": [
             1000,
-            600,
-            1500
+            1682,
+            1101
           ],
-          "seconds": 1.6,
-          "pause": 0.15,
-          "sound": -1,
-          "easing": "quintic",
-          "delays": [
-            0,
-            0.05,
-            0.12
-          ]
-        },
-        {
-          "name": "Contented little nod",
-          "pulse": [
-            1000,
-            600,
-            1467
-          ],
-          "seconds": 0.55,
+          "seconds": 0.65,
           "pause": 0,
           "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
+        },
+        {
+          "name": "That felt good \u00b7 contented nod",
+          "pulse": [
+            1000,
+            1682,
+            1145
+          ],
+          "seconds": 0.25,
+          "pause": 0,
+          "sound": -1,
+          "easing": "quintic",
+          "delays": [
             0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         },
         {
           "name": "Comfortable again",
           "pulse": [
             1000,
-            600,
-            1500
+            1682,
+            1101
           ],
-          "seconds": 0.85,
-          "pause": 0.25,
-          "sound": 1,
+          "seconds": 0.3,
+          "pause": 0,
+          "sound": -1,
           "easing": "quintic",
           "delays": [
             0,
-            0,
-            0
-          ]
+            0.04,
+            0.08
+          ],
+          "gesture_speed": 600
         }
       ]
     }

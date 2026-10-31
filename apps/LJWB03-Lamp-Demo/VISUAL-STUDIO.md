@@ -1,3 +1,19 @@
+## Larger, distinct emotional gestures (latest)
+
+The three actions now last roughly4.5–5seconds from the selected left-facing Rest, superseding the earlier2second version. Slump curls inward/down with a heavy head, a hesitant recovery and a grateful nod; Water reaches outward with two clear pointing nods and a friendly wait; Stretch unfolds upward, raises its face and relaxes in stages. Existing robot/musical cues play with the movement.
+
+Generated motions now search up to420µs away from Rest in the two body joints, with head adjustments up to450µs. Actual optimized changes for the saved lamp reach roughly195–330µs in the elbow/body and234–324µs in the head, depending on action. The gestures intentionally use different combinations of joints instead of forcing every servo through its full electrical travel. All pulses remain500..2500 and the existing600µs/s action cap and easing are retained. The model keeps the head on the left and above the base plane throughout sampled trajectories; it does not model full housing/link collision, force or gravity.
+
+Open the latest Studio via the desktop launcher, then Play each preview before running. A visually inspected native storyboard is also open for comparing key poses. Older already-open Studio windows retain the previous code until reopened. The calibration and named profile were not edited during this redesign.
+
+## Visually reviewed left-side, fast actions (31October)
+
+Actual Studio inspection found that Starter Rest1000/600/1500 folded the head onto the right and could add a54second transition from the left-facing pose. The active action home is now **Reviewed Left Rest1000/1682/1101**, taken from the visible left-facing model. The original starter pose remains available and calibration was not changed. Both the active settings and Lamp Cardboard Prototype snapshot include the new role selection; previous snapshot is backed up.
+
+All three stock actions now use compact six-phase easing, with a600µs/s action cap, approximately2.2s Slump,2.0s Water and2.1s Stretch when starting at Reviewed Left Rest. This dedicated action cap replaces the old60µs/s cap for these stock plans only. Custom routines/live settings remain separate. A distant initial pose still takes longer; speaker clips can finish after the motion (~2.3s). No speed limit is bypassed. User-created distant targets may also require more time.
+
+**Use current picture as action Rest** lets you save another home explicitly. The one-click previews and Run previewed plan share the same rows and cap. Actual Studio-rendered key poses for all3 were visually inspected side by side: head/front remain left, slump tilts down, water makes a left-side invitation, stretch lifts/levels the head, all return to the same left home. Calibration points remain unchanged; this corrects the action anchor and timing, not measured physical calibration. No board commands were sent. Offline review window is open for trying previews; the older original window may still show the prior version. Reopen the regular launcher to load current code.
+
 ## Expressive routines (latest)
 
 Studio opens at **Three actions**. Press **Play Slump preview**, **Play Water preview** or **Play Stretch preview** once to watch the complete animation with laptop audio, phase captions and playback progress. Use **Run previewed plan** afterward for the same sampled curves on the robot, or the action's Run button. Connect and engage first if you want the preview to start at the real commanded pose. The observed model stays as your observation rather than copying the animation.

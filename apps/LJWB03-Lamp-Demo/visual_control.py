@@ -322,6 +322,7 @@ class App:
             var=tk.StringVar(value=self.p.get('roles',{}).get(key,''));self.roles[key]=var
             box=ttk.Combobox(row,textvariable=var,state='readonly');box.pack(side='left',fill='x',expand=True);self.role_boxes.append(box)
         ttk.Button(actions,text='Save action checkpoint choices',command=lambda:self.attempt(self.save_roles)).pack(fill='x',pady=6)
+        ttk.Button(actions,text='Use current picture as action Rest',command=lambda:self.attempt(self.set_action_home)).pack(fill='x',pady=4)
         ttk.Button(actions,text='Load editable starter checkpoints',command=lambda:self.attempt(self.load_action_starters)).pack(fill='x',pady=6)
         self.action_style=tk.StringVar(value='Robot chirps');ttk.Combobox(actions,textvariable=self.action_style,values=['Robot chirps','Musical tones'],state='readonly').pack(fill='x',pady=8)
         for key in ('Slump','Water','Stretch'):
@@ -415,10 +416,10 @@ class App:
         c.create_text(x,y+44,text='BASE · rotating pedestal',fill='#c7d9e3',font=('Segoe UI',8))
         for i,name in enumerate(('lower arm','upper arm')):
             a,b=pts[i],pts[i+1]
-            c.create_text((a[0]+b[0])/2,(a[1]+b[1])/2-14,text=name,fill='#d8e5ec',font=('Segoe UI',8))
+            if not self.previewing:c.create_text((a[0]+b[0])/2,(a[1]+b[1])/2-14,text=name,fill='#d8e5ec',font=('Segoe UI',8))
         for i,(x,y) in enumerate(pts[:3]):
             c.create_oval(x-5,y-5,x+5,y+5,fill='#12232e',outline=COLORS[i],width=3)
-            c.create_text(x-9,y-10,text=('J1 lift','J2 elbow','J3 head tilt')[i],anchor='e',fill=COLORS[i],font=('Segoe UI',8,'bold'))
+            if not self.previewing:c.create_text(x-9,y-10,text=('J1 lift','J2 elbow','J3 head tilt')[i],anchor='e',fill=COLORS[i],font=('Segoe UI',8,'bold'))
         # The final link describes the head orientation. Face may be flipped
         # independently of the servo map to match the physical shade mounting.
         x,y=pts[3];px,py=pts[2];length=max(.001,math.hypot(x-px,y-py));sign=self.p.get('head_face_sign',1)
@@ -430,7 +431,7 @@ class App:
         c.create_line(*point(13,-12),*point(13,12),fill='#fff9d8',width=4)
         c.create_line(*front,*point(62,0),fill='#fff0a5',width=2,arrow='last')
         c.create_text(*point(72,0),text='FRONT',fill='#fff0a5',font=('Segoe UI',8,'bold'))
-        c.create_text(x,y-25,text='LAMP HEAD',fill='#fff0a5',font=('Segoe UI',8,'bold'))
+        if not self.previewing:c.create_text(x,y-25,text='LAMP HEAD',fill='#fff0a5',font=('Segoe UI',8,'bold'))
         # A small center dot remains available as the last drag handle.
         c.create_oval(x-4,y-4,x+4,y+4,fill=COLORS[2],outline='white')
     def flip_face(self):
@@ -447,7 +448,7 @@ class App:
             for i in range(3):
                 c.create_line(*pts[i],*pts[i+1],fill=COLORS[i],width=10,capstyle='round');x,y=pts[i+1];c.create_oval(x-10,y-10,x+10,y+10,fill=COLORS[i],outline='#fff',width=2)
             self.lamp_details(c,pts)
-            self.draw_range(pts)
+            if not self.previewing:self.draw_range(pts)
             label='MATCHING PICTURE ONLY · robot stays still' if self.match_angles is not None else 'Calibrated estimate' if all(self.p['calibrated']) else 'UNCALIBRATED · drawing directions are estimates'
             c.create_text(16,20,text=label,anchor='w',fill='#c7d9e3',font=('Segoe UI',11));c.create_text(16,44,text='Preview pulses: '+' / '.join(map(str,pulse))+' µs',anchor='w',fill='#c7d9e3')
             self.draw_real()
@@ -587,6 +588,14 @@ class App:
                 check_pose(values,self.p['config']);self.p['poses'][name]=values
             self.roles[role].set(name)
         self.save_roles();self.refresh_lists();self.status.set('Starter checkpoints loaded. Estimates only: replace with poses observed on your lamp.')
+    def gesture_config(self,rows):
+        cfg=self.config()
+        if rows and all(row.get('gesture_speed')==600 for row in rows):cfg['max_speed']=600
+        return cfg
+    def set_action_home(self):
+        if self.busy or self.previewing:raise ValueError('Stop the preview or movement first.')
+        self.p['poses']['My action Rest']=self.pulse();self.roles['Rest'].set('My action Rest');self.save_roles();self.refresh_lists()
+        self.status.set('Current picture saved as action Rest. No robot movement sent.')
     def action_rows(self,kind):
         rest=self.roles['Rest'].get();target=self.roles[kind].get()
         if rest not in self.p['poses'] or target not in self.p['poses']:raise ValueError('Select Rest and '+kind+' checkpoints, or load the editable starters.')
@@ -594,7 +603,7 @@ class App:
     def run_action(self,kind):
         self.ready();rows=self.action_rows(kind)
         if messagebox.askokcancel('Run '+kind,'Run '+kind+' using the selected checkpoints? Check clearance and support the lamp before first engagement.',parent=self.root):
-            self.save_roles();self.send('slump',(rows,self.config(),self.count))
+            self.save_roles();self.send('slump',(rows,self.gesture_config(rows),self.count))
     def add_base(self,d):
         self.p['routine'].append(self.base_row(d));self.save();self.refresh_lists()
     def engage(self):self.attempt(self._engage)
@@ -776,7 +785,7 @@ class App:
         rows=copy.deepcopy(self.p['routine'] if rows is None else rows)
         if not rows:raise ValueError('Add routine checkpoints first.')
         candidate=copy.deepcopy(self.p);candidate['routine']=rows;check_project(candidate)
-        cfg=self.config();start=self.state['pulse'][:3].copy() if self.connected and self.state and self.state['active'][:3]==[1,1,1] else self.pulse()
+        cfg=self.gesture_config(rows);start=self.state['pulse'][:3].copy() if self.connected and self.state and self.state['active'][:3]==[1,1,1] else self.pulse()
         check_pose(start,cfg)
         self.preview_plan=dict(rows=rows,cfg=cfg,start=start,calibration=copy.deepcopy(self.p['calibration']),lengths=self.p['lengths'].copy(),head_face_sign=self.p.get('head_face_sign',1))
         if self.real_angles is None:self.real_reference=start.copy()

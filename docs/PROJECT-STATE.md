@@ -13,3 +13,7 @@ Prior LJYD authentication did not obtain a successful session; the reason remain
 Pose work is delegated to a teammate. The included static-image benchmark built separately on ESP-IDF5.4.1 with ESP-DL3.3.14; live camera conversion, temporal posture interpretation, concurrency and actual speed remain integration work. An attached MPU6050 would measure its own module's motion, not a person's pose or servo shaft position.
 
 Public export excludes private credentials/history/captures and complete tools. Some historical guides describe earlier preparation stages; this state and README are the current overview.
+
+## Latest motion update ·31October
+
+Corrected action home to Reviewed Left Rest1000/1682/1101, preserving original checkpoints and calibration. Stock actions are now larger and distinct, ~4.5–5seconds at600µs/s: Slump curls inward/down with hesitation and recovery; Water reaches outward and nods twice; Stretch opens upward and releases gradually. Joint/head geometry drives generated targets; real non-Starter checkpoints still take priority. Tests cover both styles, exact return, pulse/rate bounds, left-side sampled paths and no profile mutation. Actual Studio-rendered key poses were visually inspected. Physical collision/load checks remain necessary; no hardware actions were sent for these updates.

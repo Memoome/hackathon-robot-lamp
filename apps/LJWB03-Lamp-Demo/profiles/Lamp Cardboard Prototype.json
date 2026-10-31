@@ -109,6 +109,11 @@
       950,
       550,
       1600
+    ],
+    "Reviewed Left Rest": [
+      1000,
+      1682,
+      1101
     ]
   },
   "routine": [],
@@ -159,7 +164,7 @@
   "base_reverse": true,
   "direction_fix_20261030": true,
   "roles": {
-    "Rest": "Starter Rest",
+    "Rest": "Reviewed Left Rest",
     "Slump": "Starter Slump",
     "Water": "Starter Water",
     "Stretch": "Starter Stretch"
@@ -170,5 +175,10 @@
     true,
     true
   ],
-  "profile_name": "Lamp Cardboard Prototype"
+  "profile_name": "Lamp Cardboard Prototype",
+  "preview_pulse": [
+    1000,
+    1682,
+    1101
+  ]
 }

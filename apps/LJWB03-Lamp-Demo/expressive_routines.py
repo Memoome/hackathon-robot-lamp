@@ -25,16 +25,19 @@ def face(p,pose,angle,home,limit=210):
     return result
 def tilt(p,pose,delta,home):
     return face(p,pose,geometry(p,pose)[1]+delta,home)
-def body(p,home,dx,dy,face_angle):
+def body(p,home,dx,dy,face_angle,reach=150,head_limit=210):
     """Search a small local neighbourhood, avoiding a large inverse-IK branch jump."""
-    origin,_=geometry(p,home);goal=(origin[2][0]+dx,origin[2][1]+dy);best=None
-    for da in range(-150,151,15):
-        for db in range(-150,151,15):
+    origin,_=geometry(p,home);goal=(origin[-1][0]+dx,origin[-1][1]+dy);hinge_goal=(origin[2][0]+dx,origin[2][1]+dy);best=None
+    side=1 if origin[-1][0]>=0 else -1
+    for da in range(-reach,reach+1,15):
+        for db in range(-reach,reach+1,15):
             candidate=[max(500,min(2500,home[0]+da)),max(500,min(2500,home[1]+db)),home[2]]
+            candidate=face(p,candidate,face_angle,home,head_limit)
             xy,_=geometry(p,candidate)
-            cost=(xy[2][0]-goal[0])**2+(xy[2][1]-goal[1])**2+.005*(da*da+db*db)
+            if xy[-1][0]*side<25 or xy[-1][1]>-15:continue
+            cost=2*((xy[2][0]-hinge_goal[0])**2+(xy[2][1]-hinge_goal[1])**2)+.2*((xy[-1][0]-goal[0])**2+(xy[-1][1]-goal[1])**2)+.001*(da*da+db*db)
             if best is None or cost<best[0]:best=(cost,candidate)
-    return face(p,best[1],face_angle,home)
+    return best[1] if best is not None else home.copy()
 def trajectory_duration(start,row,cap):
     delays=row.get('delays',[0,0,0])
     # Quintic easing has a maximum slope of1.875. Include joint lag in the cap.
@@ -46,7 +49,7 @@ def sample_motion(start,row,elapsed,cap):
         ease=u*u*u*(10+u*(-15+6*u));values.append(round(a+(b-a)*ease))
     return values,duration
 
-def build_gesture(p,roles,kind,music=False):
+def build_slow_gesture(p,roles,kind,music=False):
     home=p['poses'][roles['Rest']].copy();xy,heading=geometry(p,home)
     forward=1 if math.cos(math.radians(heading))>=0 else -1
     down=forward*1;up=-forward*1;length=sum(p['lengths'][:2])
@@ -97,5 +100,48 @@ def build_gesture(p,roles,kind,music=False):
         add('Settle without snapping back',home,1.6,.15,delays=(0,.05,.12))
         add('Contented little nod',tilt(p,home,down*3,home),.55)
         add('Comfortable again',home,.85,.25,happy)
+    else:raise ValueError('Unknown action')
+    return rows
+
+
+def build_gesture(p,roles,kind,music=False,intensity=1.):
+    home=p['poses'][roles['Rest']].copy();_,heading=geometry(p,home)
+    forward=1 if math.cos(math.radians(heading))>=0 else -1
+    down=forward;size=sum(p['lengths'][:2]);rows=[]
+    custom=not roles[kind].startswith('Starter ')
+    def expressive_body(dx,dy,angle):return body(p,home,dx,dy,angle,reach=420,head_limit=450)
+    def turn(pose,delta):return face(p,pose,geometry(p,pose)[1]+delta,home,450)
+    def add(name,pose,seconds,pause=0,sound=-1,delays=(0,.04,.08)):
+        rows.append(dict(name=name,pulse=lerp(home,pose,intensity),seconds=seconds,pause=pause,sound=sound,easing='quintic',delays=list(delays),gesture_speed=600))
+    add('Left-facing home',home,.12)
+    if kind=='Slump':
+        target=p['poses'][roles[kind]].copy() if custom else expressive_body(-forward*size*.09,size*.17,heading+down*38)
+        add('Oh… · the face loses its energy',turn(home,down*22),.4,sound=2 if music else 0)
+        add('Body gives in · curl inward and down',target,.95,.45,delays=(.12,0,.18))
+        add('Heavy head · one last sag',turn(target,down*6),.3,.2)
+        halfway=lerp(target,home,.3)
+        add('A reluctant effort to look up',halfway,.45,.12)
+        add('Recover · lift the body with relief',home,.95,delays=(.08,0,.12))
+        add('A grateful little nod',turn(home,down*5),.24)
+        add('Back with you',home,.3)
+    elif kind=='Water':
+        target=p['poses'][roles[kind]].copy() if custom else expressive_body(forward*size*.19,size*.015,heading+down*6)
+        add('Hey! · quick glance toward the bottle',turn(home,down*10),.3)
+        add('Reach out · this is for you',target,.85,sound=5 if music else 4,delays=(.12,0,.06))
+        add('There! · first pointing nod',turn(target,down*15),.25)
+        add('Look at the bottle',target,.3)
+        add('Yes, there · a second smaller nod',turn(target,down*10),.24)
+        add('Friendly invitation · wait for you',target,.3,.35)
+        add('Relax to rest',home,.85,delays=(.1,0,.05))
+    elif kind=='Stretch':
+        target=p['poses'][roles[kind]].copy() if custom else expressive_body(forward*size*.03,-size*.25,heading-down*43)
+        dip=expressive_body(-forward*size*.015,size*.03,heading+down*5)
+        add('Gather a breath · small crouch',dip,.4)
+        add('Unfold slowly · reach high and open',target,1.1,.4,7 if music else 6,delays=(.08,0,.15))
+        add('Aah · lift the face into the stretch',turn(target,-down*5),.3,.3)
+        add('Breathe out · release the whole body',lerp(target,home,.55),.7)
+        add('Settle softly after the stretch',home,.65)
+        add('That felt good · contented nod',turn(home,down*4),.25)
+        add('Comfortable again',home,.3)
     else:raise ValueError('Unknown action')
     return rows

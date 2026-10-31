@@ -102,7 +102,7 @@ for kind in ('Slump','Water','Stretch'):
         app.action_style.set(style);rows=app.action_rows(kind)
         assert rows[0]['pulse']==rows[-1]['pulse']==app.p['poses']['Rest']
         assert any(row['pulse']==app.p['poses'][kind] for row in rows)
-        assert any(row['sound']>=0 for row in rows) and len(rows)>=7
+        assert any(row['sound']>=0 for row in rows) and len(rows)>=5
 pose,duration=v.preview_motion([500,500,500],[2500,600,500],2,600,.5)
 assert pose==[800,600,500] and abs(duration-2000/600)<1e-7
 temp=tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).resolve().parent)

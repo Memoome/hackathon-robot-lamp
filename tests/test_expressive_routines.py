@@ -9,8 +9,13 @@ for kind in ('Slump','Water','Stretch'):
         rows=e.build_gesture(p,p['roles'],kind,music)
         project=copy.deepcopy(p);project['routine']=rows;v.check_project(project)
         assert rows[0]['pulse']==rows[-1]['pulse']==home
-        if kind=='Slump':assert e.geometry(p,rows[2]['pulse'])[0][-1][1]>y0
-        if kind=='Stretch':assert e.geometry(p,rows[3]['pulse'])[0][-1][1]<y0
+        total=0;previous=home
+        for row in rows:
+            total+=e.trajectory_duration(previous,row,600)+row['pause'];previous=row['pulse']
+            assert e.geometry(p,row['pulse'])[0][-1][0]<0,'Lamp crossed to right side'
+        assert 3<total<7,total
+        if kind=='Slump':assert e.geometry(p,next(r['pulse'] for r in rows if 'Body gives in' in r['name']))[0][-1][1]>y0
+        if kind=='Stretch':assert e.geometry(p,next(r['pulse'] for r in rows if 'Unfold slowly' in r['name']))[0][-1][1]<y0
         start=home
         for row in rows:
             for cap in (60,120,600):
