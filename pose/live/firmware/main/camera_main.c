@@ -1,9 +1,12 @@
 #include "pose_engine.h"
+#include "detect_engine.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "esp_log.h"
 #include "esp_psram.h"
 #include "driver/gpio.h"
+#include "driver/gpio_filter.h"
 #include "driver/spi_master.h"
 #include "esp_cam_ctlr_spi.h"
 #include "esp_cam_sensor_xclk.h"
@@ -33,6 +36,14 @@ static int initialized,last_error;
 static int rotation=90;
 static unsigned sequence;
 static uint32_t width,height,fourcc;
+static gpio_glitch_filter_handle_t vsync_filter;
+// BF3901 stores this format pointer; it must outlive every capture.
+static esp_cam_sensor_format_t sensor_format;
+#define THUMB_BYTES (120*160*2)
+static volatile int preview_every,preview_busy;
+static uint8_t *preview_data;
+static unsigned preview_seq;
+static TaskHandle_t preview_task_handle;
 
 static void status(void)
 {
@@ -69,8 +80,147 @@ static uint32_t fnv32(const uint8_t *p,uint32_t n)
     return h;
 }
 
-static esp_err_t operate(int capture)
+// stdout is unbuffered, so printf issues several writes; two tasks would interleave mid-line.
+static void out_line(const char *fmt,...)
 {
+    char buf[320];
+    va_list ap;va_start(ap,fmt);
+    int n=vsnprintf(buf,sizeof(buf),fmt,ap);
+    va_end(ap);
+    if(n<0)return;
+    if(n>=(int)sizeof(buf))n=sizeof(buf)-1;
+    fwrite(buf,1,n,stdout);
+}
+
+// Downscale a 240x320 frame to a 120x160 UYVY thumbnail.
+static void make_thumb(const uint8_t *src,uint8_t *thumb)
+{
+    for(unsigned y=0;y<160;y++) for(unsigned x=0;x<120;x+=2) {
+        const uint8_t *a=src+(y*2*width+x*2)*2;
+        uint8_t *d=thumb+(y*120+x)*2;
+        if(fourcc==V4L2_PIX_FMT_UYVY) {
+            d[0]=((unsigned)a[0]+a[4])/2;d[1]=a[1];
+            d[2]=((unsigned)a[2]+a[6])/2;d[3]=a[5];
+        } else {
+            d[0]=((unsigned)a[1]+a[5])/2;d[1]=a[0];
+            d[2]=((unsigned)a[3]+a[7])/2;d[3]=a[4];
+        }
+    }
+}
+
+static void send_hex(const uint8_t *data,uint32_t n)
+{
+    const char hexchars[]="0123456789abcdef";
+    for(uint32_t off=0;off<n && !cancelled;) {
+        char hex[193];uint32_t count=n-off;if(count>96)count=96;
+        for(uint32_t i=0;i<count;i++){uint8_t c=data[off+i];hex[2*i]=hexchars[c>>4];hex[2*i+1]=hexchars[c&15];}
+        hex[count*2]=0;out_line("CAM_DATA %lu %s\r\n",(unsigned long)off,hex);
+        off+=count;if(!(off%3072u))vTaskDelay(1);
+    }
+}
+
+// Sends stream previews on its own task so detection keeps running during the transfer.
+static void preview_task(void *arg)
+{
+    (void)arg;
+    for(;;) {
+        ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+        uint32_t hash=fnv32(preview_data,THUMB_BYTES);
+        out_line("PREVIEW_BEGIN %u %u 120 160 UYVY %08lx\r\n",preview_seq,THUMB_BYTES,(unsigned long)hash);
+        send_hex(preview_data,THUMB_BYTES);
+        if(cancelled)out_line("PREVIEW_ABORT %u\r\n",preview_seq);
+        else out_line("PREVIEW_END %u %u %08lx\r\n",preview_seq,THUMB_BYTES,(unsigned long)hash);
+        preview_busy=0;
+    }
+}
+
+static esp_err_t stream(void)
+{
+    int fd=-1,streaming=0;
+    uint8_t *buffers[2]={0};
+    size_t sizes[2]={0};
+    esp_err_t err=setup_video();
+    if(err!=ESP_OK) return err;
+    fd=open(ESP_VIDEO_SPI_DEVICE_NAME,O_RDWR);
+    if(fd<0) return ESP_FAIL;
+    if(ioctl(fd,VIDIOC_G_SENSOR_FMT,&sensor_format)!=0 ||
+       ioctl(fd,VIDIOC_S_SENSOR_FMT,&sensor_format)!=0) {err=ESP_FAIL;goto done;}
+    struct v4l2_format fmt={.type=V4L2_BUF_TYPE_VIDEO_CAPTURE};
+    if(ioctl(fd,VIDIOC_G_FMT,&fmt)!=0){err=ESP_FAIL;goto done;}
+    width=fmt.fmt.pix.width;height=fmt.fmt.pix.height;fourcc=fmt.fmt.pix.pixelformat;
+    detected=1;
+    if((fourcc!=V4L2_PIX_FMT_UYVY && fourcc!=V4L2_PIX_FMT_YUYV) || width!=240 || height!=320) {err=ESP_ERR_NOT_SUPPORTED;goto done;}
+    struct v4l2_requestbuffers req={.count=2,.type=V4L2_BUF_TYPE_VIDEO_CAPTURE,.memory=V4L2_MEMORY_MMAP};
+    if(ioctl(fd,VIDIOC_REQBUFS,&req)!=0 || req.count!=2){err=ESP_FAIL;goto done;}
+    for(int i=0;i<2;i++) {
+        struct v4l2_buffer b={.index=i,.type=V4L2_BUF_TYPE_VIDEO_CAPTURE,.memory=V4L2_MEMORY_MMAP};
+        if(ioctl(fd,VIDIOC_QUERYBUF,&b)!=0){err=ESP_FAIL;goto done;}
+        sizes[i]=b.length;
+        buffers[i]=mmap(NULL,b.length,PROT_READ|PROT_WRITE,MAP_SHARED,fd,b.m.offset);
+        if(buffers[i]==MAP_FAILED){buffers[i]=NULL;err=ESP_FAIL;goto done;}
+        if(ioctl(fd,VIDIOC_QBUF,&b)!=0){err=ESP_FAIL;goto done;}
+    }
+    struct timeval timeout={.tv_sec=1,.tv_usec=0};
+    if(ioctl(fd,VIDIOC_S_DQBUF_TIMEOUT,&timeout)!=0){err=ESP_FAIL;goto done;}
+    int type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if(ioctl(fd,VIDIOC_STREAMON,&type)!=0){err=ESP_FAIL;goto done;}
+    streaming=1;
+    ESP_LOGI(TAG,"STREAM_START width=%lu height=%lu fourcc=%08lx preview_every=%d warmup_frames=3",(unsigned long)width,(unsigned long)height,(unsigned long)fourcc,preview_every);
+    int warm=0;
+    unsigned valid=0,bad=0,dq_fail=0,dets=0,previews=0,skipped=0;
+    int64_t last_valid=esp_timer_get_time(),last_det=0,stats_at=last_valid+5000000;
+    while(!cancelled) {
+        int64_t now=esp_timer_get_time();
+        if(now-last_valid>3000000){err=ESP_ERR_TIMEOUT;break;}
+        if(now>=stats_at) {
+            out_line("STREAM_STATS {\"valid\":%u,\"bad\":%u,\"dq_fail\":%u,\"det\":%u,\"preview\":%u,\"preview_skipped\":%u,\"psram_free\":%u}\r\n",
+                   valid,bad,dq_fail,dets,previews,skipped,(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+            stats_at=now+5000000;
+        }
+        struct v4l2_buffer b={.type=V4L2_BUF_TYPE_VIDEO_CAPTURE,.memory=V4L2_MEMORY_MMAP};
+        if(ioctl(fd,VIDIOC_DQBUF,&b)!=0){++dq_fail;continue;}
+        int ok=b.index<2 && b.bytesused==width*height*2 && b.bytesused<=sizes[b.index];
+        if(ok) {
+            last_valid=esp_timer_get_time();
+            ++valid;
+            if(warm<3) ++warm;
+            else {
+                const uint8_t *src=buffers[b.index];
+                ++sequence;
+                if(preview_every>0 && sequence%preview_every==0) {
+                    if(preview_busy) ++skipped;
+                    else {
+                        make_thumb(src,preview_data);
+                        preview_seq=sequence;preview_busy=1;++previews;
+                        xTaskNotifyGive(preview_task_handle);
+                    }
+                }
+                double cycle=last_det?(last_valid-last_det)/1000.0:0;
+                err=detect_engine_stream(src,width,height,fourcc,rotation,sequence,last_valid/1000,cycle);
+                last_det=last_valid;
+                ++dets;
+            }
+        } else ++bad;
+        if(ioctl(fd,VIDIOC_QBUF,&b)!=0){err=ESP_FAIL;break;}
+        if(err!=ESP_OK)break;
+        // Let the idle task run; DQBUF may not block when a frame is already queued.
+        vTaskDelay(1);
+    }
+    ESP_LOGI(TAG,"STREAM_STOP valid=%u bad=%u dq_fail=%u det=%u preview=%u preview_skipped=%u",valid,bad,dq_fail,dets,previews,skipped);
+done:
+    if(fd>=0) {
+        if(streaming){int t=V4L2_BUF_TYPE_VIDEO_CAPTURE;ioctl(fd,VIDIOC_STREAMOFF,&t);}
+        for(int i=0;i<2;i++)if(buffers[i])munmap(buffers[i],sizes[i]);
+        close(fd);
+    }
+    // Do not report done while a preview is still being printed.
+    for(int i=0;preview_busy && i<300;i++)vTaskDelay(pdMS_TO_TICKS(10));
+    return err;
+}
+
+static esp_err_t operate(int job)
+{
+    int capture=job!=1;
     int fd=-1,streaming=0;
     uint8_t *buffers[2]={0},*thumb=NULL,*raw=NULL;
     size_t sizes[2]={0};
@@ -79,8 +229,6 @@ static esp_err_t operate(int capture)
     fd=open(ESP_VIDEO_SPI_DEVICE_NAME,O_RDWR);
     if(fd<0) return ESP_FAIL;
     if(capture) {
-        // BF3901 stores this format pointer; it must outlive every capture.
-        static esp_cam_sensor_format_t sensor_format;
         if(ioctl(fd,VIDIOC_G_SENSOR_FMT,&sensor_format)!=0 ||
            ioctl(fd,VIDIOC_S_SENSOR_FMT,&sensor_format)!=0) {err=ESP_FAIL;goto done;}
         ESP_LOGI(TAG,"FRAME_CONFIG_REFRESH applied_before_streamon=1");
@@ -124,17 +272,7 @@ static esp_err_t operate(int capture)
         if(valid && ++good>=5) {
             const uint8_t *src=buffers[b.index];
             memcpy(raw,src,width*height*2);
-            for(unsigned y=0;y<160;y++) for(unsigned x=0;x<120;x+=2) {
-                const uint8_t *a=src+(y*2*width+x*2)*2;
-                uint8_t *d=thumb+(y*120+x)*2;
-                if(fourcc==V4L2_PIX_FMT_UYVY) {
-                    d[0]=((unsigned)a[0]+a[4])/2;d[1]=a[1];
-                    d[2]=((unsigned)a[2]+a[6])/2;d[3]=a[5];
-                } else {
-                    d[0]=((unsigned)a[1]+a[5])/2;d[1]=a[0];
-                    d[2]=((unsigned)a[3]+a[7])/2;d[3]=a[4];
-                }
-            }
+            make_thumb(src,thumb);
         }
         if(ioctl(fd,VIDIOC_QBUF,&b)!=0){err=ESP_FAIL;goto done;}
         if(valid && good>=5) break;
@@ -148,13 +286,7 @@ static esp_err_t operate(int capture)
     printf("LIVE_START {\"id\":%u,\"rotation\":%d,\"capture_ms\":%lld}\r\n",sequence,rotation,(long long)(esp_timer_get_time()/1000));
     uint32_t n=38400,hash=fnv32(thumb,n);
     printf("\r\nCAM_BEGIN %lu 120 160 UYVY %08lx\r\n",(unsigned long)n,(unsigned long)hash);
-    const char hexchars[]="0123456789abcdef";
-    for(uint32_t off=0;off<n && !cancelled;) {
-        char hex[193];uint32_t count=n-off;if(count>96)count=96;
-        for(uint32_t i=0;i<count;i++){uint8_t c=thumb[off+i];hex[2*i]=hexchars[c>>4];hex[2*i+1]=hexchars[c&15];}
-        hex[count*2]=0;printf("CAM_DATA %lu %s\r\n",(unsigned long)off,hex);
-        off+=count;if(!(off%3072u))vTaskDelay(1);
-    }
+    send_hex(thumb,n);
     if(cancelled){printf("CAM_ABORT cancelled\r\n");err=ESP_ERR_INVALID_STATE;}
     else {printf("CAM_END %lu %08lx\r\n",(unsigned long)n,(unsigned long)hash);err=ESP_OK;}
 done:
@@ -164,7 +296,10 @@ done:
         close(fd);
     }
     if(thumb)free(thumb);
-    if(err==ESP_OK && raw && !cancelled) err=pose_engine_run(raw,width,height,fourcc,rotation,sequence,&cancelled);
+    if(err==ESP_OK && raw && !cancelled) {
+        if(job==3) err=detect_engine_run(raw,width,height,fourcc,rotation,sequence,&cancelled);
+        else err=pose_engine_run(raw,width,height,fourcc,rotation,sequence,&cancelled);
+    }
     if(raw)free(raw);
     return err;
 }
@@ -174,7 +309,7 @@ static void worker(void *arg)
     (void)arg;
     for(;;) {
         int job;xQueueReceive(jobs,&job,portMAX_DELAY);
-        esp_err_t err=operate(job==2);
+        esp_err_t err=job==4?stream():operate(job);
         last_error=err;
         if(err!=ESP_OK)ESP_LOGE(TAG,"CAM_ERROR rc=%d reason=%s check=3V3_GND_SDA21_SCL47_VSYNC4_PCLK9_D0_8_PWDN41",err,esp_err_to_name(err));
         ESP_LOGI(TAG,"CAM_DONE result=%s streaming=OFF",err==ESP_OK?"OK":"ERROR");
@@ -196,8 +331,14 @@ static void command(char *out,int len,int argc,char **argv)
         return;
     }
     if(argc==2 && !strcmp(argv[1],"status")){status();return;}
-    if(argc==2 && !strcmp(argv[1],"stop")){cancelled=1;ESP_LOGI(TAG,"CAM_STOP requested");return;}
-    int job=argc==2 && !strcmp(argv[1],"probe")?1:argc==2 && !strcmp(argv[1],"capture")?2:0;
+    if(argc==2 && (!strcmp(argv[1],"stop") || !strcmp(argv[1],"stream_stop"))){cancelled=1;ESP_LOGI(TAG,"CAM_STOP requested");return;}
+    if(argc==3 && !strcmp(argv[1],"preview")) {
+        char *end=NULL;long n=strtol(argv[2],&end,10);
+        if(end && !*end && n>=0 && n<=1000){preview_every=(int)n;ESP_LOGI(TAG,"LIVE_PREVIEW every=%d",preview_every);}
+        else ESP_LOGW(TAG,"CAM_ERROR preview_range");
+        return;
+    }
+    int job=argc!=2?0:!strcmp(argv[1],"probe")?1:!strcmp(argv[1],"capture")?2:!strcmp(argv[1],"detect")?3:!strcmp(argv[1],"stream_start")?4:0;
     if(!job){ESP_LOGW(TAG,"CAM_ERROR invalid_command");return;}
     portENTER_CRITICAL(&mux);int reject=busy;if(!reject){busy=1;cancelled=0;}portEXIT_CRITICAL(&mux);
     if(reject){ESP_LOGW(TAG,"CAM_ERROR busy");return;}
@@ -207,7 +348,23 @@ static void command(char *out,int len,int argc,char **argv)
 void app_main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
+    // Reject narrow VSYNC/CS pulses before they reach the SPI peripheral.
+    // Keep frame/line-header and payload-length validation unchanged.
+    const gpio_pin_glitch_filter_config_t filter_config = {.gpio_num = 4};
+    esp_err_t filter_err = gpio_new_pin_glitch_filter(&filter_config, &vsync_filter);
+    if (filter_err == ESP_OK) filter_err = gpio_glitch_filter_enable(vsync_filter);
+    if (filter_err != ESP_OK) {
+        ESP_LOGE(TAG, "LIVE_ERROR vsync_filter rc=%d", filter_err);
+        if (vsync_filter) gpio_del_glitch_filter(vsync_filter);
+        return;
+    }
+    ESP_LOGI(TAG, "VSYNC_FILTER gpio=4 enabled=1 window=fixed_two_iomux_cycles");
     if(pose_engine_init()!=ESP_OK) {ESP_LOGE(TAG,"LIVE_ERROR model_init");return;}
+    if(detect_engine_init()!=ESP_OK) {ESP_LOGE(TAG,"LIVE_ERROR detect_model_init");return;}
+    preview_data=heap_caps_malloc(THUMB_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!preview_data || xTaskCreate(preview_task,"preview",4096,NULL,3,&preview_task_handle)!=pdPASS) {
+        ESP_LOGE(TAG,"CAM_ERROR preview_init"); return;
+    }
     jobs=xQueueCreate(1,sizeof(int));
     if(!jobs || xTaskCreate(worker,"camera_test",8192,NULL,6,NULL)!=pdPASS) {
         ESP_LOGE(TAG,"CAM_ERROR task_init"); return;
@@ -222,7 +379,7 @@ void app_main(void)
             if(!overflow && used) {
                 char *save=NULL; char *argv[3]; int argc=0;
                 for(char *p=strtok_r(line," ", &save);p && argc<3;p=strtok_r(NULL," ",&save)) argv[argc++]=p;
-                if(argc==2 && !strcmp(argv[0],"cam_test")) command(NULL,0,argc,argv);
+                if(argc>=2 && !strcmp(argv[0],"cam_test")) command(NULL,0,argc,argv);
                 else ESP_LOGW(TAG,"CAM_ERROR invalid_command");
             }
             used=0;overflow=0;

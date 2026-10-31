@@ -10,18 +10,43 @@ import time
 import uuid
 import math
 import hashlib
+import sys
 import camera_wire as wire
 import posture
 
 ROOT=Path(__file__).resolve().parents[1]
 EDGES=((0,1),(0,2),(1,3),(2,4),(5,6),(5,7),(7,9),(6,8),(8,10),(5,11),(6,12),(11,12),(11,13),(13,15),(12,14),(14,16))
 
+def check_board_error(line):
+    if any(marker in line for marker in ('assert failed', 'Guru Meditation',
+                                         'Brownout detector', 'LIVE_ERROR')):
+        raise RuntimeError('板端启动或运行异常：' + line)
+
+def wait_status(s, diagnostic, timeout=15, require_idle=False):
+    """Retry status during boot; opening the CH343 can restart this board."""
+    deadline=time.monotonic()+timeout
+    next_query=0
+    while time.monotonic()<deadline:
+        now=time.monotonic()
+        if now>=next_query:
+            s.write(b'cam_test status\n')
+            next_query=now+0.5
+        line=s.readline().decode('ascii','replace').strip()
+        if not line:continue
+        diagnostic(line)
+        check_board_error(line)
+        if re.search(r'CAM_STATUS\b.*\bbusy=[01]\b',line):
+            if not require_idle or re.search(r'\bbusy=0\b',line):return line
+    raise TimeoutError('未收到' + ('空闲' if require_idle else '') + '状态确认；请检查串口日志。')
+
 def orient(rgb,w,h,rotation):
     if rotation not in (0,90,180,270):raise ValueError('Invalid rotation')
     for _ in range(rotation//90):rgb,w,h=wire.rotate_rgb(rgb,w,h)
     return rgb,w,h
 
-def validate_result(result,frame):
+MODES={'pose':(b'cam_test capture\n','POSE_RESULT '),'detect':(b'cam_test detect\n','DETECT_RESULT ')}
+
+def validate_result(result,frame,mode='pose'):
     rotation=frame['rotation']
     width,height=(320,240) if rotation in (90,270) else (240,320)
     if result.get('id')!=frame['id'] or result.get('rotation')!=rotation or (result.get('width'),result.get('height'))!=(width,height):
@@ -29,22 +54,29 @@ def validate_result(result,frame):
     if not isinstance(result.get('people'),list) or len(result['people'])>5:raise ValueError('Invalid people list')
     if not isinstance(result.get('inference_ms'),(int,float)) or not math.isfinite(result['inference_ms']) or result['inference_ms']<0:raise ValueError('Invalid timing')
     for person in result['people']:
-        if len(person.get('box',[]))!=4 or len(person.get('keypoints',[]))!=17 or not 0<=person.get('score',-1)<=1:raise ValueError('Invalid person')
+        if len(person.get('box',[]))!=4 or not 0<=person.get('score',-1)<=1:raise ValueError('Invalid person')
+        if mode=='pose' and len(person.get('keypoints',[]))!=17:raise ValueError('Invalid person')
+        if mode=='detect' and 'keypoints' in person:raise ValueError('Invalid person')
         for i,v in enumerate(person['box']):
             if not isinstance(v,int) or not 0<=v<(width if i%2==0 else height):raise ValueError('Invalid box')
-        for p in person['keypoints']:
+        for p in person.get('keypoints',[]):
             if p is not None and (not isinstance(p,list) or len(p)!=2 or not all(isinstance(v,int) for v in p) or not (0<=p[0]<width and 0<=p[1]<height)):
                 raise ValueError('Invalid keypoint')
     return result
 
-def receive(s,stop,emit,diagnostic=None):
+def receive(s,stop,emit,diagnostic=None,mode='pose'):
+    prefix=MODES[mode][1]
     frame=None;header=None;data=bytearray();result=None;ended=False;sent_stop=False
+    sensor_error=None
     deadline=time.monotonic()+45
     while time.monotonic()<deadline:
         if stop.is_set() and not sent_stop:s.write(b'cam_test stop\n');sent_stop=True
         line=s.readline().decode('ascii','replace').strip()
         if not line:continue
         if diagnostic is not None and not line.startswith('CAM_DATA '):diagnostic(line)
+        check_board_error(line)
+        if 'Camera sensor is not BF3901' in line:
+            sensor_error=line
         if line.startswith('LIVE_START '):
             if frame:raise ValueError('Duplicate frame header')
             frame=json.loads(line[len('LIVE_START '):]);frame['received_at']=time.monotonic()
@@ -68,9 +100,10 @@ def receive(s,stop,emit,diagnostic=None):
             frame['rgb'],frame['w'],frame['h']=orient(wire.decode_uyvy(data,120,160),120,160,frame['rotation'])
             ended=True
             if not stop.is_set():emit('frame',frame)
-        elif line.startswith('POSE_RESULT '):
+        elif line.startswith(prefix):
             if not ended or result:raise ValueError('Result without complete matching frame')
-            result=validate_result(json.loads(line[len('POSE_RESULT '):]),frame)
+            result=validate_result(json.loads(line[len(prefix):]),frame,mode)
+            result['mode']=mode
             result['cycle_ms']=(time.monotonic()-frame['received_at'])*1000
         elif 'CAM_DONE ' in line:
             if stop.is_set():return None
@@ -78,41 +111,134 @@ def receive(s,stop,emit,diagnostic=None):
             frame['result']=result
             emit('result',frame)
             return frame
-        elif ('CAM_ERROR' in line or 'CAM_ABORT' in line) and not stop.is_set():raise RuntimeError(line)
+        elif ('CAM_ERROR' in line or 'CAM_ABORT' in line) and not stop.is_set():
+            raise RuntimeError((sensor_error+'\n' if sensor_error else '')+line)
     try:s.write(b'cam_test stop\n')
     finally:raise TimeoutError('45 秒内未完成采集/推理；已请求停止')
 
-def session(stop,emit,rotation=90,count=0,save=False):
+def session(stop,emit,rotation=90,count=0,save=False,mode='pose'):
+    if mode not in MODES:raise ValueError('Invalid mode')
     received=[]
     (ROOT/'evidence').mkdir(exist_ok=True)
-    log_path=ROOT/'evidence'/('serial-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.log')
+    log_path=ROOT/'evidence'/('serial-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.log')
     with wire.connect() as s, log_path.open('w',encoding='utf-8') as log:
-        s.baudrate=921600;s.reset_input_buffer()
-        s.write(b'cam_test status\n')
-        deadline=time.monotonic()+3;status=''
-        while time.monotonic()<deadline:
-            line=s.readline().decode('ascii','replace')
-            if 'CAM_STATUS' in line:status=line;break
-        if not status or 'busy=0' not in status:raise RuntimeError('未收到空闲状态。请确认实时姿态固件并关闭其他串口工具。')
-        s.write(f'cam_test rotate{rotation}\n'.encode())
-        deadline=time.monotonic()+3;ack=False
-        while time.monotonic()<deadline:
-            line=s.readline().decode('ascii','replace')
-            if f'LIVE_ROTATION {rotation}' in line:ack=True;break
-            if 'CAM_ERROR' in line:raise RuntimeError(line)
-        if not ack:raise RuntimeError('方向设置未确认')
+        def diagnostic(line):
+            log.write(line+'\n');log.flush()
+        s.baudrate=921600
+        status=wait_status(s,diagnostic)
+        if not re.search(r'\bbusy=0\b',status):raise RuntimeError('摄像头已被占用；未发送采集命令。')
+        set_rotation(s,rotation,diagnostic)
         emit('status','已连接。正在采集新画面…')
         try:
             while not stop.is_set() and (not count or len(received)<count):
-                s.write(b'cam_test capture\n')
-                frame=receive(s,stop,emit,lambda line:log.write(line+'\n'))
+                s.write(MODES[mode][0])
+                frame=receive(s,stop,emit,diagnostic,mode)
                 if frame is None:break
                 if save:save_frame(frame)
                 if count:received.append(frame['result'])
         finally:
             # Camera streams are stopped before transfer/inference; no automatic requests after stop.
-            s.write(b'cam_test stop\n')
+            pending_error=sys.exc_info()[0] is not None
+            try:
+                s.write(b'cam_test stop\n')
+                wait_status(s,diagnostic,require_idle=True)
+            except Exception as exc:
+                diagnostic('HOST_STOP_UNCONFIRMED '+str(exc))
+                if not pending_error:raise
     return received
+
+def validate_det(det,rotation):
+    if not isinstance(det.get('seq'),int) or det['seq']<0:raise ValueError('Invalid seq')
+    for key in ('prep_ms','cycle_ms'):
+        if not isinstance(det.get(key),(int,float)) or not math.isfinite(det[key]) or det[key]<0:raise ValueError('Invalid timing')
+    validate_result(dict(det,id=det['seq'],inference_ms=det.get('infer_ms')),{'id':det['seq'],'rotation':rotation},'detect')
+    return dict(det,id=det['seq'],inference_ms=det['infer_ms'],mode='detect')
+
+def set_rotation(s,rotation,diagnostic):
+    s.write(f'cam_test rotate{rotation}\n'.encode())
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline:
+        line=s.readline().decode('ascii','replace')
+        diagnostic(line.rstrip())
+        check_board_error(line)
+        if f'LIVE_ROTATION {rotation}' in line:return
+        if 'CAM_ERROR' in line:raise RuntimeError(line)
+    raise RuntimeError('方向设置未确认')
+
+def receive_stream(s,stop,emit,rotation,diagnostic=None,idle_timeout=5):
+    """Continuous detections plus optional previews until stop; returns after CAM_DONE."""
+    recent={};preview=None;sent_stop=False
+    last=time.monotonic();stop_deadline=None
+    while True:
+        now=time.monotonic()
+        if stop.is_set() and not sent_stop:
+            s.write(b'cam_test stop\n');sent_stop=True;stop_deadline=now+10
+        if sent_stop and now>stop_deadline:raise TimeoutError('停止后 10 秒内未确认结束')
+        if not sent_stop and now-last>idle_timeout:
+            s.write(b'cam_test stop\n')
+            raise TimeoutError(f'{idle_timeout} 秒内未收到检测结果；已请求停止')
+        line=s.readline().decode('ascii','replace').strip()
+        if not line:continue
+        if diagnostic is not None and not line.startswith('CAM_DATA '):diagnostic(line)
+        check_board_error(line)
+        if line.startswith('DET '):
+            det=validate_det(json.loads(line[4:]),rotation)
+            last=time.monotonic()
+            recent[det['seq']]=det
+            for old in [k for k in recent if k<det['seq']-60]:del recent[old]
+            if not stop.is_set():emit('det',det)
+        elif line.startswith('PREVIEW_BEGIN '):
+            m=re.fullmatch(r'PREVIEW_BEGIN (\d+) (\d+) (\d+) (\d+) UYVY ([0-9a-fA-F]{8})',line)
+            if not m or tuple(map(int,m.groups()[1:4]))!=(38400,120,160):raise ValueError('Invalid preview header')
+            preview=dict(seq=int(m[1]),hash=int(m[5],16),data=bytearray())
+        elif line.startswith('CAM_DATA '):
+            if preview is None:continue
+            _,off,payload=line.split();block=bytes.fromhex(payload)
+            if int(off)!=len(preview['data']) or not 0<len(block)<=96 or len(preview['data'])+len(block)>38400:raise ValueError('Preview offset/length error')
+            preview['data'].extend(block)
+        elif line.startswith('PREVIEW_END '):
+            _,seq,n,check=line.split()
+            if preview is None or int(seq)!=preview['seq'] or int(n)!=38400 or len(preview['data'])!=38400 or int(check,16)!=preview['hash'] or wire.fnv(preview['data'])!=preview['hash']:
+                raise ValueError('Preview checksum failed')
+            data=bytes(preview['data']);seq=preview['seq'];preview=None
+            frame={'id':seq,'rotation':rotation,'raw':data,'fnv32':f'{wire.fnv(data):08x}'}
+            frame['rgb'],frame['w'],frame['h']=orient(wire.decode_uyvy(data,120,160),120,160,rotation)
+            frame['result']=recent.get(seq)
+            if not stop.is_set():emit('preview',frame)
+        elif line.startswith('PREVIEW_ABORT '):
+            preview=None
+        elif line.startswith('STREAM_STATS '):
+            if not stop.is_set():emit('stats',json.loads(line[len('STREAM_STATS '):]))
+        elif 'CAM_DONE ' in line:
+            if sent_stop:return
+            raise RuntimeError('板端连续检测意外结束：'+line)
+        elif 'CAM_ERROR' in line and not sent_stop:
+            raise RuntimeError(line)
+
+def stream_session(stop,emit,rotation=90,preview_every=10):
+    if type(preview_every) is not int or not 0<=preview_every<=1000:raise ValueError('Invalid preview interval')
+    (ROOT/'evidence').mkdir(exist_ok=True)
+    log_path=ROOT/'evidence'/('serial-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.log')
+    with wire.connect() as s, log_path.open('w',encoding='utf-8') as log:
+        def diagnostic(line):
+            log.write(line+'\n');log.flush()
+        s.baudrate=921600
+        status=wait_status(s,diagnostic)
+        if not re.search(r'\bbusy=0\b',status):raise RuntimeError('摄像头已被占用；未发送采集命令。')
+        set_rotation(s,rotation,diagnostic)
+        s.write(f'cam_test preview {preview_every}\n'.encode())
+        s.write(b'cam_test stream_start\n')
+        emit('status','已连接。板端正在连续检测…')
+        try:
+            receive_stream(s,stop,emit,rotation,diagnostic)
+        finally:
+            pending_error=sys.exc_info()[0] is not None
+            try:
+                s.write(b'cam_test stop\n')
+                wait_status(s,diagnostic,require_idle=True)
+            except Exception as exc:
+                diagnostic('HOST_STOP_UNCONFIRMED '+str(exc))
+                if not pending_error:raise
 
 def overlay(frame):
     rgb=bytearray(frame['rgb']);w,h=frame['w'],frame['h']
@@ -127,7 +253,8 @@ def overlay(frame):
         x0,y0=a;x1,y1=b;n=max(abs(x1-x0),abs(y1-y0),1)
         for i in range(n+1):pixel(round(x0+(x1-x0)*i/n),round(y0+(y1-y0)*i/n),color)
     for person in result['people']:
-        points=[None if p is None else (min(w-1,int(p[0]*w/result['width'])),min(h-1,int(p[1]*h/result['height']))) for p in person['keypoints']]
+        points=[None if p is None else (min(w-1,int(p[0]*w/result['width'])),min(h-1,int(p[1]*h/result['height']))) for p in person.get('keypoints',[])]
+        if len(points)!=17:points=[None]*17
         for a,b in EDGES:
             if points[a] is not None and points[b] is not None:line(points[a],points[b],(0,255,120))
         x0,y0,x1,y1=person['box'];box=[(int(x0*w/result['width']),int(y0*h/result['height'])),(int(x1*w/result['width']),int(y1*h/result['height']))]

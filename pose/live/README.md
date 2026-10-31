@@ -84,7 +84,19 @@ person swap or camera movement automatically. No robot motion is triggered.
 ## Firmware dependencies and build boundary
 
 The historical build used ESP-IDF 5.4.1, ESP-DL 3.3.14, COCO Pose 0.4.1 and
-`YOLO11N_POSE_S8_V1`. ESP-DL sources are referenced at
+`YOLO11N_POSE_S8_V1`. An experimental second engine (`detect_engine.cpp`) adds
+the official `pedestrian_detect` model (`PICO_S8_V1`, same ESP-DL 3.3.14/esp-dl
+revision, component version 0.3.2, 224x224 input, box+score only, no
+keypoints) for comparing on-board person-detection latency against the pose
+model; it is not wired to any lamp/servo motion. Send `cam_test detect` over
+serial to run it instead of `cam_test capture`; it prints `DETECT_RESULT`
+instead of `POSE_RESULT`. `cam_test stream_start` keeps the camera streaming
+and prints one `DET {json}` line per frame (seq, board time, colour-conversion
+`prep_ms`, model `infer_ms`, `cycle_ms`, boxes and centres) until `cam_test
+stop`; `cam_test preview N` (0 = off) adds a 120x160 preview every N frames as
+`PREVIEW_BEGIN`/`CAM_DATA`/`PREVIEW_END`, sent from a separate task so
+detection continues during the transfer. `STREAM_STATS` reports valid/bad
+frames every 5 s. The web viewer's detection mode uses this stream. ESP-DL sources are referenced at
 `5acd1c9992af4afb0fa80c221a676982b11381b8` (see `../README.md`). Camera
 components `esp_video` and `esp_cam_sensor` were 2.2.0, manifest source revision
 `ac5d2ac96d63f5222cff77d90a4409fb0c3b8c76` in
@@ -92,9 +104,11 @@ components `esp_video` and `esp_cam_sensor` were 2.2.0, manifest source revision
 
 Third-party SDK/component sources and model weights are not copied here.
 Prepare the original compatible component set, retaining its licenses:
-`coco_pose`, `esp-dl`, `dl_fft`, `esp_new_jpeg`, `esp_video`, `esp_cam_sensor`,
-`esp_sccb_intf`, `cmake_utilities`, `esp-dsp` and `usb_host_uvc` plus their
-declared dependencies. Keep paths usable by the Windows ESP-IDF linker;
+`coco_pose`, `pedestrian_detect`, `esp-dl`, `dl_fft`, `esp_new_jpeg`,
+`esp_video`, `esp_cam_sensor`, `esp_sccb_intf`, `cmake_utilities`, `esp-dsp`
+and `usb_host_uvc` plus their declared dependencies. `pedestrian_detect` comes
+from the same `espressif/esp-dl` revision above, under `models/pedestrian_detect`.
+Keep paths usable by the Windows ESP-IDF linker;
 spaces/non-ASCII precompiled-library paths caused issues in the original build.
 In an activated ESP-IDF 5.4.1 shell:
 

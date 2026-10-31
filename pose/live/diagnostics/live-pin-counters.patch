@@ -1,0 +1,92 @@
+--- a/main/camera_main.c
++++ b/main/camera_main.c
+@@ -25,6 +25,10 @@
+ #include <sys/time.h>
+ #include <unistd.h>
+ 
++#include "pin_diag.h"
++#include "driver/gpio_filter.h"
++static gpio_glitch_filter_handle_t vsync_filter;
++
+ #define TAG "cam_test"
+ static QueueHandle_t jobs;
+ static portMUX_TYPE mux=portMUX_INITIALIZER_UNLOCKED;
+@@ -110,6 +114,8 @@
+     int type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+     if(ioctl(fd,VIDIOC_STREAMON,&type)!=0){err=ESP_FAIL;goto done;}
+     streaming=1;
++    err=pin_diag_start();
++    if(err!=ESP_OK)goto done;
+     ESP_LOGI(TAG,"CAM_CAPTURING warmup_frames=5 timeout_ms=10000");
+     int good=0,dq_ok=0,dq_fail=0,last_errno=0,bad=0;
+     unsigned last_used=0,last_index=0;
+@@ -158,6 +164,7 @@
+     if(cancelled){printf("CAM_ABORT cancelled\r\n");err=ESP_ERR_INVALID_STATE;}
+     else {printf("CAM_END %lu %08lx\r\n",(unsigned long)n,(unsigned long)hash);err=ESP_OK;}
+ done:
++    pin_diag_stop();
+     if(fd>=0) {
+         if(streaming){int t=V4L2_BUF_TYPE_VIDEO_CAPTURE;ioctl(fd,VIDIOC_STREAMOFF,&t);}
+         for(int i=0;i<2;i++)if(buffers[i])munmap(buffers[i],sizes[i]);
+@@ -207,6 +214,12 @@
+ void app_main(void)
+ {
+     setvbuf(stdout, NULL, _IONBF, 0);
++    gpio_pin_glitch_filter_config_t filter_config={.gpio_num=4};
++    if(gpio_new_pin_glitch_filter(&filter_config,&vsync_filter)!=ESP_OK ||
++       gpio_glitch_filter_enable(vsync_filter)!=ESP_OK) {
++        ESP_LOGE(TAG,"LIVE_ERROR gpio_filter_init");return;
++    }
++    ESP_LOGI(TAG,"PIN_GLITCH_FILTER gpio=4 enabled=1 window=fixed_two_iomux_cycles");
+     if(pose_engine_init()!=ESP_OK) {ESP_LOGE(TAG,"LIVE_ERROR model_init");return;}
+     jobs=xQueueCreate(1,sizeof(int));
+     if(!jobs || xTaskCreate(worker,"camera_test",8192,NULL,6,NULL)!=pdPASS) {
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -1 +1 @@
+-idf_component_register(SRCS "camera_main.c" "pose_engine.cpp" INCLUDE_DIRS "." REQUIRES coco_pose esp_video esp_cam_sensor esp_driver_gpio esp_driver_spi esp_timer esp_psram)
++idf_component_register(SRCS "camera_main.c" "pose_engine.cpp" INCLUDE_DIRS "." REQUIRES coco_pose esp_video esp_cam_sensor esp_driver_gpio esp_driver_spi esp_timer esp_psram esp_driver_pcnt)
+--- /dev/null
++++ b/main/pin_diag.h
+@@ -0,0 +1,41 @@
++#include "driver/pulse_cnt.h"
++#include "esp_check.h"
++static const int diag_pins[4]={4,4,9,8};
++static pcnt_unit_handle_t diag_units[4];
++static pcnt_channel_handle_t diag_channels[4];
++static bool diag_enabled[4],diag_started[4];
++static int64_t diag_start_us;
++static esp_err_t pin_diag_start(void)
++{
++    diag_start_us=esp_timer_get_time();
++    for(int i=0;i<4;i++) {
++        pcnt_unit_config_t config={.low_limit=-1,.high_limit=32767,.flags.accum_count=1};
++        ESP_RETURN_ON_ERROR(pcnt_new_unit(&config,&diag_units[i]),"pin_diag","new unit");
++        pcnt_chan_config_t channel={.edge_gpio_num=diag_pins[i],.level_gpio_num=-1};
++        ESP_RETURN_ON_ERROR(pcnt_new_channel(diag_units[i],&channel,&diag_channels[i]),"pin_diag","new channel");
++        // PCNT defaults to enabling pull-up; restore the SPI inputs to no pull.
++        gpio_pullup_dis(diag_pins[i]);gpio_pulldown_dis(diag_pins[i]);
++        ESP_RETURN_ON_ERROR(pcnt_channel_set_edge_action(diag_channels[i],PCNT_CHANNEL_EDGE_ACTION_INCREASE,PCNT_CHANNEL_EDGE_ACTION_HOLD),"pin_diag","edge action");
++        ESP_RETURN_ON_ERROR(pcnt_unit_add_watch_point(diag_units[i],32767),"pin_diag","overflow count");
++        if(i==1) {pcnt_glitch_filter_config_t filter={.max_glitch_ns=1000};
++            ESP_RETURN_ON_ERROR(pcnt_unit_set_glitch_filter(diag_units[i],&filter),"pin_diag","filter");}
++        ESP_RETURN_ON_ERROR(pcnt_unit_enable(diag_units[i]),"pin_diag","enable");diag_enabled[i]=true;
++        ESP_RETURN_ON_ERROR(pcnt_unit_clear_count(diag_units[i]),"pin_diag","clear");
++        ESP_RETURN_ON_ERROR(pcnt_unit_start(diag_units[i]),"pin_diag","start");diag_started[i]=true;
++    }
++    return ESP_OK;
++}
++static void pin_diag_stop(void)
++{
++    for(int i=0;i<4;i++) {
++        if(diag_started[i]) {
++            pcnt_unit_stop(diag_units[i]);
++            int count=-1;esp_err_t result=pcnt_unit_get_count(diag_units[i],&count);
++            ESP_LOGI("pin_diag","PIN_EDGES gpio=%d filter_ns=%d rising=%d elapsed_us=%lld final_level=%d rc=%d",diag_pins[i],i==1?1000:0,count,(long long)(esp_timer_get_time()-diag_start_us),gpio_get_level(diag_pins[i]),result);
++            diag_started[i]=false;
++        }
++        if(diag_enabled[i]) {pcnt_unit_disable(diag_units[i]);diag_enabled[i]=false;}
++        if(diag_channels[i]) {pcnt_del_channel(diag_channels[i]);diag_channels[i]=NULL;}
++        if(diag_units[i]) {pcnt_unit_remove_watch_point(diag_units[i],32767);pcnt_del_unit(diag_units[i]);diag_units[i]=NULL;}
++    }
++}
