@@ -19,3 +19,12 @@ apps/LJWB03-Lamp-Demo/ui-connection-check.json
 
 apps/LJWB03-Lamp-Demo/led-studio-connection.json
 apps/LJWB03-Lamp-Demo/servo-test-connection.json
+
+wireless.json
+wireless-studio-check.json
+wireless-unplug-readiness.json
+wireless-installation.json
+wireless-verification.json
+wireless-ota-verification.json
+*before-*.json
+*before-*.py

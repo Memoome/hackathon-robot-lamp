@@ -1,102 +1,64 @@
 # Expressive Robot Lamp · LJWB03 / ESP32-S3
 
-A hackathon desktop companion lamp with four servos, a camera, microphone and speaker. **Lamp Studio** provides calibrated visual control, live dragging, saved checkpoints, continuous gesture previews and three expressive actions: **Slump**, **Water break** and **Stretch with me**.
+A hackathon companion lamp with four servos, an eight-LED ring, camera, microphone and speaker. **Lamp Studio** provides visual calibration, live dragging, saved checkpoints and animated motion/light/sound previews.
 
 ## Start here (Windows)
 
-Install Python3.11 or newer with Tkinter, then clone this repository and run:
+Install Python 3.11 or newer with Tkinter, clone this repository, then run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-Windows.ps1
 ```
 
-Double-click **launch_studio.cmd**. Previews work without hardware. For a different board, connect one CH343 USB device (VID1A86/PID55D3); when multiple matching devices are connected, set `LJWB03_SERIAL` to the intended board's serial number. Public source does not contain the original board's identifier.
+Double-click **launch_studio.cmd**. Previews work without hardware. For USB, connect one CH343 board (VID 1A86 / PID 55D3), or set `LJWB03_SERIAL` to choose among several. For Wi-Fi, use **Wireless setup** to save a 2.4GHz network and pair this PC via USB, then **Find lamp & enable wireless**. See [WIRELESS.md](apps/LJWB03-Lamp-Demo/WIRELESS.md). Each teammate needs their own local pairing settings; credentials are not included.
 
-The supplied **Lamp Cardboard Prototype** profile is a reference for our assembly. Check your own linkage and servo mounting before using its pulses. Visual calibration estimates commanded geometry; it does not provide physical position or collision feedback.
+Connection and automatic reconnection never engage motors or resume an interrupted action. Keep the board powered after removing laptop USB. Servos use their separate regulated supply with common ground. The project board's header power-input capability has not been verified; USB-C power is the documented route.
+
+## Current controls and actions
+
+- Lift MG996R → GPIO12; elbow MG90S → GPIO10; head SG90 → GPIO11.
+- **Current Studio base is an SG90 position servo → GPIO15.** The former continuous MG90S requires its old speed-control mode; do not connect it and use the position controls.
+- Eight WS2812 LEDs: DI → GPIO1 through the recommended data buffer/resistor. Full map: [GPIO-USAGE.md](GPIO-USAGE.md).
+- Slump, Water break, Stretch with me, Sad and Happy have coordinated previews. Stock actions use smooth bounded motion, sound cues and changing ring colour/brightness. Water points toward a configured bottle direction; it does not detect a bottle. Sad remains curled with dim blue light. Happy adds base wiggles, head bobs and a synthesized chuckle. Stretch includes its closing ahhh sound.
+- Each preview opens a larger window showing the lamp, base direction, phase, sound cue, hue, RGB output, brightness and progress. Preview sends no hardware commands. Use **Run previewed plan** only after reviewing and explicitly engaging the supported lamp.
+- The locked **final draft** profile stays protected in Studio. Loading it creates an editable working copy. Profiles and drawings estimate commanded geometry; there are no joint encoders or physical collision/load measurements.
+
+The three bending joints retain 500–2500µs software access and bounded eased motion. Electrical bounds do not establish mechanical clearance. Preview/board timing can differ under network delay, sound buffering and physical load. STOP cancels subsequent motion/audio/colour updates; Release removes holding torque.
+
+## Firmware and integration status
+
+**Newest shared application: [lamp-action-lights.bin](firmware/prebuilt/lamp-action-lights.bin)**, with checksum in [action-lights-manifest.json](firmware/prebuilt/action-lights-manifest.json). It retains paired Wi-Fi control/OTA, LED commands and ten sound slots. Older images are recovery references; LED-only and original demo images do not preserve wireless support. See [firmware instructions](firmware/README.md) before updating. No upload occurs just by launching Studio.
+
+Wi-Fi discovery/status, paired control and same-image OTA/rejoin were verified on the project board. A speaker-only robot chirp completed over Wi-Fi. The newest application installation verified outputs off and audio ready with ten sounds; that does not verify assembled movement, acoustic quality or light output. Firmware checksums identify each build separately.
+
+**LJYD voice conversation/action integration remains separate work.** Local Wi-Fi control is not cloud authentication. The SDK contains voice/agent modules, but the diagnostic does not establish a working live cloud conversation. Named cloud actions still need explicit mapping to the lamp controller. Public source requires each developer's own product configuration; no shared product secret is supplied.
+
+The separate `pose/` starter is an ESP-DL static-image benchmark, not a finished concurrent posture pipeline. The teammate's live-vision work still needs end-to-end integration and performance verification. MPU6050 is not assigned in the lamp and is not a servo encoder.
 
 ## Where everything lives
 
-| Folder/file | Use |
+| Path | Purpose |
 |---|---|
-| `apps/LJWB03-Lamp-Demo/visual_control.py` | Main Lamp Studio interface |
-| `apps/LJWB03-Lamp-Demo/expressive_routines.py` | Motion design, geometry and eased gesture curves |
-| `apps/LJWB03-Lamp-Demo/profiles/` | Saved cardboard prototype calibration/checkpoints |
-| `apps/LJWB03-Lamp-Demo/sounds/` | Original robot/musical cues, WAV previews and embedded PCM |
-| Other `apps/` folders | Manual arm/Hello, mic, camera, vibration module and Wi-Fi/LJYD setup tools |
-| `firmware/overlay/` | Application changes to apply to the organizer's WB03 SDK |
-| `firmware/prebuilt/` | Verified diagnostic lamp application and checksum; not a full flash backup |
-| `pose/` | Separate official ESP-DL static-image benchmark starter |
-| `hardware/` | Lamp STL and supplied board/component documentation |
-| `docs/` | Development guides and architecture |
-| `tests/` | Software tests; these never prove loaded-arm mechanics |
+| `apps/LJWB03-Lamp-Demo/visual_control.py` | Main Studio interface |
+| `apps/LJWB03-Lamp-Demo/expressive_routines.py` | Motion, lighting and gesture curves |
+| `apps/LJWB03-Lamp-Demo/wireless_*.py` | Paired Wi-Fi transport, setup and updates |
+| `apps/LJWB03-Lamp-Demo/profiles/` | Reference calibration/checkpoints |
+| `apps/LJWB03-Lamp-Demo/sounds/` | Original robot and musical cues |
+| Other `apps/` folders | Earlier manual arm, Hello, mic, camera and cloud setup tools |
+| `firmware/overlay/` | Application overlay for the organizer's compatible SDK |
+| `firmware/prebuilt/` | Application-only builds and checksums |
+| `hardware/` | Lamp STL and supplied reference documents |
+| `pose/` | Separate vision benchmark starter |
+| `tests/` | Simulated hardware and protocol checks |
 
-## Wiring
-
-| Function | Signal |
-|---|---:|
-| Lift MG996R position servo | GPIO12 |
-| Elbow MG90S position servo | GPIO10 |
-| Lamp-head tilt SG90 position servo | GPIO11 |
-| Continuous-rotation MG90S base | GPIO15 |
-| 8-LED WS2812 ring DI | GPIO1 |
-| Camera SDA / SCL / VSYNC / PCLK / D0 / PWDN | 21 / 47 / 4 / 9 / 8 / 41 |
-| VB701N audio TX / RX / flow | 40 / 39 / 38 |
-
-Servos use a suitable separate regulated5V supply with ground shared with the board. Keep its positive supply separate from the USB board supply. Position commands span500–2500µs; this does not guarantee mechanical clearance. Base neutral is approximately1500µs; it controls speed rather than angle and has no heading feedback. Watch cable twist.
-
-## Current status and boundaries
-
-- Visual calibration, live control, USB reconnection, named profiles and complete gesture/sound previews are implemented.
-- The diagnostic firmware supports servo ramps, camera/mic/audio tests and explicit Wi-Fi/LJYD setup. No motion occurs automatically on connection.
-- Auto reconnect restores USB communication only. After disconnect, support and engage the lamp deliberately; interrupted motions do not resume.
-- The three expressive routines share the same eased sampler in preview and hardware target generation. Actual transport delay, speaker buffering, load and backlash can differ.
-- The LJYD voice-agent-to-action bridge is **not integrated**. Earlier registration did not establish an authenticated cloud session. USB connection and Wi-Fi connection are separate from LJYD authentication.
-- Pose recognition is a **separate build-only static-image benchmark**, not a finished live camera/posture pipeline. Integration and combined memory/performance checks remain team work.
-- LED/MPU6050 integration is not part of the completed lamp routines. MPU6050 is not a servo encoder.
+Older controller tools assume their original hardware modes. Use Studio for the current position base. See [Studio guide](apps/LJWB03-Lamp-Demo/VISUAL-STUDIO.md); newest sections come first and supersede historical behavior below them.
 
 ## Teammates: build on this
 
-**Anyone can contribute:** [fork this repository](https://github.com/Memoome/hackathon-robot-lamp/fork), add or upload your code in your fork, then open a pull request back to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the exact steps. Direct pushes require an invitation from the owner for your GitHub username.
+[Fork this repository](https://github.com/Memoome/hackathon-robot-lamp/fork), commit changes in your fork and open a pull request to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md). Direct pushes require an owner invitation. Update your clone using `git pull --ff-only`.
 
-Fork the repository, create a branch, make changes and open a pull request. Suggested work areas:
+This repository is a portable reviewed export, not an automatic bidirectional mirror of the original laptop. Private Wi-Fi/pairing files, tokens, device backups, recordings, photographs, raw conversation history, installed tools and the complete vendor SDK are excluded. Obtain the compatible SDK/toolchains separately.
 
-1. **Motion/hardware:** calibrate physical poses, inspect preview, then validate clearance/load and tune gestures.
-2. **Vision:** connect live camera frames to the pinned ESP-DL model, calibrate/debounce posture events and measure runtime.
-3. **Cloud/voice:** finish product/device authentication in LJYD, bind the agent and implement an explicit local action-event handler.
+## Tests and provenance
 
-To update a clone after teammates merge changes:
-
-```powershell
-git pull --ff-only
-```
-
-To share your changes, use a branch and pull request. Direct pushing to the owner's repository requires collaborator access; public visitors can already fork and propose changes.
-
-The desktop launch workspace on the original PC links to files outside that folder. This repository includes the relevant actual sources as a portable export. It is not a live bidirectional mirror of that PC: commit/push changes in this clone, or refresh selected source files before committing. The existing desktop setup remains usable separately.
-
-## What was intentionally excluded
-
-Wi-Fi passwords, product/device secrets, account tokens, full flash/NVS backups, private recordings/photos, raw conversation exports, local logs/status snapshots, machine shortcuts, installed tools/IDEs, downloaded multi-gigabyte portable environments and the organizer's complete vendor SDK. The maintained technical guides replace private conversation history. Install toolchains from their official sources; obtain the supplied WB03 SDK through the hackathon organizers.
-
-## Tests
-
-```powershell
-.\.venv\Scripts\python.exe -B tests\test_visual_lamp.py
-.\.venv\Scripts\python.exe -B tests\test_expressive_routines.py
-```
-
-Tests use simulated hardware. Preview first and support the real arm before engagement/release. Only one controller can own the serial port at a time.
-
-## Third-party material
-
-See [THIRD-PARTY.md](THIRD-PARTY.md). Firmware overlays require the organizer's SDK and retain upstream notices; this repository does not grant rights to the omitted vendor SDK. Do not publish credentials in contributions.
-
-## Latest lamp update ·31 October
-
-Use the locked **final draft** reference profile for this assembly. Loading it creates an editable working copy; Studio prevents overwriting the reference. Servo direction fixes and single-servo testing are included. Ring controls provide presets/custom colour, brightness and Off for eight WS2812 LEDs on GPIO1. See [GPIO-USAGE.md](GPIO-USAGE.md) for the full map and conflicts.
-
-Large emotional gestures now run in about8seconds(Slump),13seconds(Water) and13seconds(Stretch) from saved Rest. Extra repetitions/pauses were removed while retaining quintic easing and the600µs/s cap. Preview and actual run use the same sampler. Calibration and locked profile were preserved; loaded speed/torque/current have not been measured.
-
-The newer **firmware/prebuilt/lamp-led.bin** adds LED commands. led-manifest.json contains its SHA256. Only the application was installed/ROM-verified on the team's board; boot servo outputs off, LED CLI ready, audio READY/eight sounds and camera status were checked. LED colour quality and loaded gestures still need physical observation. Do not blindly flash a full partition/model image. The overlay applies to the supplied WB03 SDK; it is not a standalone vendor SDK distribution. The current diagnostic skips normal cloud conversation. Full concurrent vision/voice integration remains separate work.
-
-Tests: run the Python scripts in tests/ using the prepared environment. test_lamp_led.py additionally needs a host gcc compiler to execute its firmware parser simulation. No physical movements occur during those tests.
+Run the Python scripts in `tests/` using the prepared Python environment. `test_lamp_led.py` also needs host GCC. Tests use simulated hardware, and do not prove loaded mechanics. See [THIRD-PARTY.md](THIRD-PARTY.md) for SDK, sound and hardware-document provenance. No blanket license is asserted over third-party material.

@@ -1,6 +1,8 @@
 import pathlib,sys,tempfile,subprocess,json,copy,threading,time
 root=pathlib.Path(__file__).resolve().parents[1];sys.path.insert(0,str(root/'apps/LJWB03-Lamp-Demo'))
 import visual_control as v
+import wireless_link
+wireless_link.settings=lambda: {}
 import lamp_demo as lamp
 assert v.led_rgb('#FFD59A',10)==[26,21,15]
 assert v.led_rgb('#FFFFFF',100)==[255]*3 and v.led_rgb('#FFFFFF',0)==[0]*3
@@ -39,6 +41,7 @@ typedef int qm_err_t;
 #define BSP_WS2812_GPIO 1
 #define BSP_WS2812_LED_NUM 8
 static char logline[512];static int init_calls,fill_calls,fail_init,fail_fill;static unsigned rgb[3];
+static int lamp_reply(const char *fmt,...){va_list ap;va_start(ap,fmt);vsnprintf(logline,sizeof(logline),fmt,ap);va_end(ap);return 0;}
 static void logmsg(const char *tag,const char *fmt,...){va_list ap;va_start(ap,fmt);vsnprintf(logline,sizeof(logline),fmt,ap);va_end(ap);}
 #define QM_LOGI logmsg
 #define QM_LOGW logmsg

@@ -1,3 +1,39 @@
+## Expanded action preview
+
+Every action/routine preview automatically opens a separate **Lamp Studio · action preview** window. It keeps a larger side-view lamp, top-down base direction, angle relative to FRONT, a colour hue tile, actual RGB output tile, brightness bar, phase name, sound cue and progress visible together. The lamp emitter/beam changes colour too. The full-brightness hue tile helps identify very dim colours; the output tile and brightness value retain the actual commanded RGB intensity. Brightness is the peak RGB channel percentage, not a measured light level.
+
+The view uses the existing preview frames and sends no robot commands. Stop preview cancels animation/audio, and closing this window also cancels its preview. Run previewed plan on robot uses the existing explicit playback command and snapshot checks. The final frame stays visible after playback. All five stock actions and custom routines use the view; saved calibration and physical routines are unchanged. No firmware update is needed.
+
+## Paired routine lighting and closing stretch sound
+
+Stretch gradually changes pale green into a more saturated, deeper green across its movement. Its original opening robot/musical cue remains; an additional original 1.65-second cute robotic ahhh plays during the closing movement, in both sound styles. This requires firmware sound slot 9 (ten sounds total).
+
+Water introduces soft light blue, then uses a slow blue-to-white breathing pulse during its pointing invitation: two smooth pulses over a 3.2-second hold, with no hard on/off flashes. The arm and base keep their commanded pointing pose during this hold. Slump keeps its silent descent and single direct recovery: dim orange while curled, then gradually brighter orange as it rises, with the existing rising sound.
+
+All transitions share the same smooth colour sampler in previews and real playback. Physical fades start from the ring's actual reported RGB. STOP cancels subsequent colour and audio changes, leaving the last applied colour. Sad retains its separate blue fade and Happy retains its warm pulsing light. Arm calibration and locked profiles are unchanged. Firmware preserves Wi-Fi, GPIO assignments and previous sounds. Physical motion, lights and acoustic quality still require user verification.
+
+## Happy — cheeky chuckle
+
+**Actions → Play Happy preview / Run Happy + sound** adds an open, lifted pose followed by four alternating base wiggles (about ±12°) and cheeky head bobs. A little nod finishes at the calibrated rest and front direction. It uses an original 1.45-second synthesized three-syllable robot chuckle through the attached speaker (new sound slot 8). Musical tones uses the existing happy musical cue instead.
+
+The ring transitions from its actual reported colour into warm red-tinted white (RGB ratio 255:196:180), then alternates bright/dim several times with the giggles. Bright peaks are limited to a channel level of 64–180 based on the initial light level; dim beats are 22% of peak. It finishes at a softer warm light. Preview animates both arm and base and shows the lighting swatch, playing the same sound locally. Preview does not move the robot or change its physical lights.
+
+Happy requires the updated nine-sound firmware; the previous eight-sound firmware is rejected before any action starts. The firmware retains Wi-Fi, LED control, existing sounds and GPIO assignments, and starts with servo outputs released. Engage all three bending joints and the base before playing. STOP cancels remaining movement, audio and colour updates. No physical motion or acoustic test was performed during installation.
+
+## Sad emotion
+
+**Actions → Play Sad preview / Run Sad + sound** is separate from the silent-descent Slump routine. Happy has not been added. Sad turns toward whichever base endpoint (500 or 2500µs) is farther from its current commanded position, lowers the face and curls inward, then holds the sad pose. It plays the existing sad robot cue, or the sad musical cue selected through the sound-style control. Check endpoint clearance before running; full software bounds are not a collision guarantee.
+
+The real routine reads the ring's actual RGB before starting, fades that colour into blue during the turn, then dims blue to 20% of the starting peak channel by the end. If the ring is off, it fades in a low blue (about 10%) before dimming it. It stays dim blue after the routine; Stop leaves the last applied colour. The preview shows the fade in the Actions light swatch and LED colour preview, using the last known applied colour or the LED panel selection when no applied colour has been observed. Real playback always reads the board first. Preview does not send LED, sound or movement commands to the board.
+
+Engage the position base and three arm joints before running. Existing firmware supports the action; no flash is required. Physical response has not been tested. Existing calibration, locked profiles and previous three actions are preserved.
+
+## Current coordinated actions
+
+Stretch sways the position base about 15° left/right while curling and opening, adds five brief small head/elbow trembles at full extension, then returns to front/rest. Water rotates about 90° away from FRONT by default while pulling back; the invitation/pointing begins only after the base command reaches its target. It returns to front with the arm. Change **Water bottle direction (0–180°)** in Rotating base and save an editable profile. Slump descends silently, holds its low pose briefly, then returns directly to good posture in a single recovery phase while the rising sound plays. Both Robot chirps and Musical tones follow this timing.
+
+Base and arm animate concurrently in the preview, sharing duration/rate limits with playback. Engage the base once as well as the three bending joints before running Water or Stretch. The firmware reports commanded pulse position, not measured mechanical arrival; allow for actual load/servo response. These are fixed bottle coordinates, not bottle recognition. Base angle limits reflect the existing 500–2500µs model. Preview and check clearance before physical playback. STOP cancels the remaining action and freezes all commanded joints. No firmware update or autonomous physical motion was performed for this update.
+
 ## Live base dragging
 
 After explicitly engaging the SG90 base once, drag the top-down pointer or its pulse slider to rotate the real base immediately. Drag speed controls target speed, capped at 600µs/s; release, pointer exit, focus loss or STOP freezes the current command. The pointer returns to the acknowledged command after stopping so it does not leave an unexecuted target waiting. No Move button or live-enable checkbox is needed for dragging. Before engagement it is a screen preview only. Typed pulse values and scripted previews do not automatically move the base. Use Move to preview for typed targets. Routine previews remain screen-only; routine playback uses the existing saved position checkpoints. No firmware update is required.

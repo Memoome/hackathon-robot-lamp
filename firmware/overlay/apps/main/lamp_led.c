@@ -1,6 +1,14 @@
 #include "lamp_led.h"
 #include "peripheral/bsp_ws2812.h"
 #include "qm_cli.h"
+#include "wireless.h"
+#undef QM_LOGI
+#undef QM_LOGW
+#undef QM_LOGE
+#define QM_LOGI(tag,...) lamp_reply(__VA_ARGS__)
+#define QM_LOGW(tag,...) lamp_reply(__VA_ARGS__)
+#define QM_LOGE(tag,...) lamp_reply(__VA_ARGS__)
+#define qm_cli_printf lamp_reply
 #include "qm_log.h"
 #include <stdlib.h>
 #include <string.h>
@@ -38,3 +46,5 @@ qm_err_t lamp_led_cli_init(void) {
     /* Registration only: no GPIO allocation, lights or automatic replay. */
     return qm_cli_register_command(&cli);
 }
+
+void lamp_remote_led(int argc,char **argv){command(NULL,0,argc,argv);}

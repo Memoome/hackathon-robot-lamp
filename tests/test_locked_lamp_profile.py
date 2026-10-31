@@ -1,6 +1,8 @@
 import copy,json,pathlib,sys,tempfile
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'apps/LJWB03-Lamp-Demo'))
 import visual_control as v
+import wireless_link
+wireless_link.settings=lambda: {}
 snapshot=json.loads((v.PROFILES/'final draft.json').read_text(encoding='utf-8'))
 with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as temp:
     v.FILE=pathlib.Path(temp)/'active.json';v.PROFILES=pathlib.Path(temp)/'profiles';v.PROFILES.mkdir()

@@ -1,17 +1,28 @@
 # Lamp diagnostic firmware
 
-`overlay/` mirrors selected paths relative to the organizer's WB03 SDK root (the directory containing apps/ and qumios-dev/). It includes application motion/camera/audio/network additions, main/CMake integration, audio assets and the VB701N driver changes needed by our diagnostic. It is **not a standalone replacement for the full vendor SDK**.
+`overlay/` contains project application changes relative to the organizer's WB03 SDK root (with apps/ and qumios-dev/). Obtain that compatible SDK and ESP-IDF 5.4.1 separately. This overlay is not a standalone SDK distribution.
 
-Use the organizer-provided SDK and compatible ESP-IDF5.4.1 environment. Apply to a separate working copy:
+Apply to a separate working copy:
 
 ```powershell
 .\Apply-Overlay.ps1 -VendorSdkRoot C:\WB03SDK
-# From an activated ESP-IDF shell:
 idf.py -C C:\WB03SDK\apps -B build-lamp -DOFFLINE_AUDIO_TEST=ON build
 ```
 
-The SDK may require its existing config/dependency setup and original component assets. The overlay was exported from the working original SDK; a fresh vendor distribution/build on a teammate's machine has not been tested. Do not replace vendor-managed dependency versions indiscriminately. The diagnostic deliberately uses runtime USB-entered identity rather than source sample product credentials.
+The vendor SDK may need its original dependency/configuration setup. A clean build on another teammate's machine has not been verified. Public `ljyd_cloud.h` has empty product identity: configure your own locally for product builds, and do not commit secrets. Diagnostic setup can save a separate runtime identity. Diagnostic mode does not start normal LJYD conversation.
 
-`prebuilt/lamp-demo.bin` is the verified application image only. Do not run generic full-flash commands from build logs over an already configured board. A safe installation must verify the exact board/security/partition table, back up its current application, preserve NVS/models, write only the application at0x20000 in the matching reference layout, verify the digest, then confirm outputs off and audio status. Other boards/layouts require a different procedure. Application download alone does not save board credentials or restore a changed model partition.
+## Application images
 
-Do not flash while the unsupported lamp can fall: support it, turn external servo power off and close controllers first. No installer in this repository automatically flashes the board.
+- **lamp-action-lights.bin**: current ten-sound application with wireless/OTA, LEDs, chuckle and closing stretch ahhh. Check action-lights-manifest.json.
+- **lamp-wireless.bin**: earlier eight-sound wireless build, insufficient for all current actions.
+- **lamp-led.bin** and **lamp-demo.bin**: historical recovery references that predate wireless; do not use them expecting Wi-Fi to remain available.
+
+These files are application-only, not full-flash backups. Models, NVS, bootloader and partition table are separate. The current application's USB installation was verified on the project board; that does not validate all physical gestures or a fresh SDK build.
+
+## Updates
+
+Support the lamp, release outputs, switch external servo power off, disconnect Studio, then use **Wireless setup → Upload firmware over Wi-Fi**. Choose an application image retaining wireless support. The updater writes the inactive slot, checks SHA256/application format, and restarts; it refuses active servo outputs. Keep the board powered throughout. Invalid/incomplete uploads are not selected. Automatic rollback for a valid but malfunctioning future application is not enabled; USB recovery may be needed.
+
+After OTA the active slot can be ota_1 at0x410000 instead of ota_0 at0x20000. **Do not blindly use an old fixed-offset USB installer.** Inspect the actual board/security/partition/active-slot state, back up its application and preserve settings/models before any USB recovery. Nothing here automatically flashes hardware.
+
+See apps/LJWB03-Lamp-Demo/WIRELESS.md for local pairing and discovery. The service uses paired local HTTP, not TLS; keep it on a trusted LAN without port forwarding. Local pairing keys and actual board/network addresses are excluded from this repository.

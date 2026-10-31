@@ -1,11 +1,11 @@
-# Current shared project state ·31 October 2026
+# Shared project state · 31 October 2026
 
-Main controller: apps/LJWB03-Lamp-Demo/visual_control.py. Latest behavior and limitations are in README.md and the main app guide. GPIO-USAGE.md is the full current wiring reference. Lift12=MG996R, elbow10=MG90S, head11=SG90, base15=continuousMG90S, ring1=8WS2812 LEDs. Camera/audio assignments retained.
+The current portable Studio includes Wi-Fi/USB transport, paired local discovery, explicit firmware updates, position-base control, visual calibration, locked final draft, live dragging and expanded animated previews. Lift12=MG996R, elbow10=MG90S, head11=SG90, current base15=SG90 position, ring1=8 WS2812 LEDs. Earlier continuous-base tools remain historical references.
 
-The final draft profile preserves user-confirmed calibration; loaded copies are editable without overwriting that reference. Smooth large Slump/Water/Stretch routines use the same bounded quintic sampler in preview and hardware. Their timing is about8/13/13seconds fromRest. Original robot and music cues are retained.
+Five stock actions are available: Slump, Water, Stretch, Sad and Happy. Arm/base movement, sound and lighting share the preview/playback plan. Water uses a configured bottle location. Software geometry is not physical feedback. Calibration and locked profiles were preserved.
 
-Newest diagnostic image is firmware/prebuilt/lamp-led.bin, SHA256728cc848746dd98d6c85bd501b7221b633f99bd763be632326ab66fef6d9d967. Application-only installation and inactive servo outputs, audio READY/eight sounds, camera status and non-driving LED status/invalid-command rejection were verified. Physical LED output/loaded large routines were not exercised by the agent. The earlier prebuilt lamp-demo.bin remains a recovery reference.
+Latest application: firmware/prebuilt/lamp-action-lights.bin, SHA256 f9c16d6b5f48971b290a490043850a2107f0f0123ca47a3ee4c19b522fa8c25e, 1943280 bytes, ten sound slots, wireless retained. Original-device application-only installation, outputs off and audio ready were recorded. Physical assembled actions/lights still need observation. Wi-Fi discovery/status, earlier OTA/rejoin tests and a speaker-only chirp were verified separately. Current source is a snapshot; running source does not itself flash the board.
 
-Wi-Fi setup is implemented; a working LJYD live voice/action bridge is not established by this diagnostic. Agent/product binding, cloud authentication, live audio testing, action mapping and concurrent pose integration remain separate verification steps. The supplied application source includes voice and plugin integration work; code availability is not proof that the device currently runs it.
+LJYD live authentication/conversation/action mapping and concurrent vision remain separate integration tasks. The public overlay contains no configured product secret. Pair each PC and enter Wi-Fi/product credentials locally. Do not publish local settings, full-flash/NVS images or private captures.
 
-The portable source export excludes credentials, private captures/history, full flash backups, installed tools and the complete vendor SDK. SDK overlay builds still require the organizer's compatible SDK and dependencies.
+Read README.md for current behavior and firmware/README.md for update/SDK requirements. Studio guide newest sections supersede historical sections. This export preserves the existing teammate contribution history.

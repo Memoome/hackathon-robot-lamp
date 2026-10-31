@@ -2,6 +2,14 @@
 #if defined(CONFIG_OFFLINE_AUDIO_TEST) && CONFIG_OFFLINE_AUDIO_TEST
 #include "qm.h"
 #include "qm_cli.h"
+#include "wireless.h"
+#undef QM_LOGI
+#undef QM_LOGW
+#undef QM_LOGE
+#define QM_LOGI(tag,...) lamp_reply(__VA_ARGS__)
+#define QM_LOGW(tag,...) lamp_reply(__VA_ARGS__)
+#define QM_LOGE(tag,...) lamp_reply(__VA_ARGS__)
+#define qm_cli_printf lamp_reply
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_timer.h"
@@ -24,6 +32,7 @@ static int64_t deadlines[4];
 static int64_t motor_deadline;
 static int motor_initialized;
 static int ready;
+static int updating;
 static int angles[3]={-1,-1,-1};
 static int64_t arm_lease;
 static uint32_t arm_session;
@@ -216,6 +225,7 @@ static void live_command(char *out,int out_len,int argc,char **argv)
     (void)out;(void)out_len;
     if(!ready){QM_LOGW(TAG,"LIVE_ERROR not_ready");return;}
     xSemaphoreTake(lock,portMAX_DELAY);
+    if(updating){xSemaphoreGive(lock);lamp_reply("LIVE_ERROR updating");return;}
     unsigned pin,pulse,mode,direction,speed,lo,hi,neutral;
     int64_t now=esp_timer_get_time();
     if(argc==2 && !strcmp(argv[1],"status"))live_status();
@@ -410,5 +420,15 @@ esp_err_t actuator_test_init(void)
     QM_LOGI(TAG,"ARM_READY version=1 gpio=12,10,11 boot_signals=OFF");
     QM_LOGI(TAG,"ACT_READY version=1 mg_gpio=12 sg_gpio=10 motor_gpio=13 motor_driver=1 boot_signals=OFF max_ms=600");
     return ESP_OK;
+}
+
+void lamp_remote_arm(int argc,char **argv){live_command(NULL,0,argc,argv);}
+int lamp_update_gate(int enable){
+ if(!ready)return 0;
+ xSemaphoreTake(lock,portMAX_DELAY);
+ int ok=1;for(int i=0;i<4;i++)if(deadlines[i])ok=0;
+ if(motor_deadline)ok=0;
+ if(!enable){updating=0;ok=1;}else if(ok)updating=1;
+ xSemaphoreGive(lock);return ok;
 }
 #endif

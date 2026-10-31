@@ -66,11 +66,11 @@
     [
       [
         500,
-        119.89998188952232
+        88.35360965866619
       ],
       [
         2500,
-        -60.10001811047768
+        -91.64639034133381
       ]
     ],
     [
@@ -127,7 +127,14 @@
       "hold": false
     }
   ],
-  "matches": {},
+  "matches": {
+    "1": [
+      [
+        1682,
+        -18.02639034133381
+      ]
+    ]
+  },
   "base_reverse": true,
   "direction_fix_20261030": true,
   "roles": {
@@ -161,9 +168,10 @@
   "elbow_mount_direction_fix_20261031": true,
   "head_up_direction_fix_20261031": true,
   "base_position": {
-    "preview": 1473,
+    "preview": 1099,
     "reverse": true,
-    "front": 90.0
+    "front": 90.0,
+    "water_angle": 180.0
   },
   "base_left_direction_fix_20261031": true
 }

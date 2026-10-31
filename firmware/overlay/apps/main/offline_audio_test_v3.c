@@ -6,6 +6,14 @@
 #include "qm.h"
 #if defined(CONFIG_OFFLINE_AUDIO_TEST) && CONFIG_OFFLINE_AUDIO_TEST
 #include "qm_cli.h"
+#include "wireless.h"
+#undef QM_LOGI
+#undef QM_LOGW
+#undef QM_LOGE
+#define QM_LOGI(tag,...) lamp_reply(__VA_ARGS__)
+#define QM_LOGW(tag,...) lamp_reply(__VA_ARGS__)
+#define QM_LOGE(tag,...) lamp_reply(__VA_ARGS__)
+#define qm_cli_printf lamp_reply
 #include "qm_work.h"
 #include "adapter/qm_audio_device.h"
 #include "adapter/qm_audio_device_vb701n_test.h"
@@ -30,7 +38,7 @@
 #define JOB_STOP (-5)
 #define JOB_HELLO (-6)
 #define JOB_EMOTION_FIRST (-20)
-#define IS_EMOTION(j) ((j)<=JOB_EMOTION_FIRST && (j)>=JOB_EMOTION_FIRST-7)
+#define IS_EMOTION(j) ((j)<=JOB_EMOTION_FIRST && (j)>=JOB_EMOTION_FIRST-9)
 #define JOB_VOLUME_BASE 2000
 extern const uint8_t offline_music_pcm_start[] asm("_binary_offline_music_pcm_start");
 extern const uint8_t offline_music_pcm_end[] asm("_binary_offline_music_pcm_end");
@@ -52,6 +60,10 @@ extern const uint8_t lamp_robot_stretch_start[] asm("_binary_lamp_robot_stretch_
 extern const uint8_t lamp_robot_stretch_end[] asm("_binary_lamp_robot_stretch_end");
 extern const uint8_t lamp_music_stretch_start[] asm("_binary_lamp_music_stretch_start");
 extern const uint8_t lamp_music_stretch_end[] asm("_binary_lamp_music_stretch_end");
+extern const uint8_t lamp_robot_chuckle_start[] asm("_binary_lamp_robot_chuckle_start");
+extern const uint8_t lamp_robot_chuckle_end[] asm("_binary_lamp_robot_chuckle_end");
+extern const uint8_t lamp_robot_stretch_ahh_start[] asm("_binary_lamp_robot_stretch_ahh_start");
+extern const uint8_t lamp_robot_stretch_ahh_end[] asm("_binary_lamp_robot_stretch_ahh_end");
 static volatile int s_emotion_state;
 static volatile int s_emotion_id=-1;
 static uint8_t *s_pcm;
@@ -75,8 +87,8 @@ static void status(void)
 {
     const char *name; int busy; uint32_t n; unsigned vol;
     portENTER_CRITICAL(&s_mux); name=s_state; busy=s_busy; n=s_retained; vol=s_volume; portEXIT_CRITICAL(&s_mux);
-    QM_LOGI(TAG,"STATUS mode=OFFLINE_PCM revision=3 state=%s busy=%d chip_ready=%d retained_bytes=%lu volume=%u autoplay=OFF hello_state=%d emotion_state=%d emotion_id=%d emotion_count=8",name,busy,qm_vb701n_test_ready(),(unsigned long)n,vol,s_hello_state,s_emotion_state,s_emotion_id);
-    QM_LOGI(TAG,"HELP audio_test record 2..10 | play | hello | emotion 0..7 | fixture | loopback | volume 0..100 | export | stop | status");
+    QM_LOGI(TAG,"STATUS mode=OFFLINE_PCM revision=3 state=%s busy=%d chip_ready=%d retained_bytes=%lu volume=%u autoplay=OFF hello_state=%d emotion_state=%d emotion_id=%d emotion_count=10",name,busy,qm_vb701n_test_ready(),(unsigned long)n,vol,s_hello_state,s_emotion_state,s_emotion_id);
+    QM_LOGI(TAG,"HELP audio_test record 2..10 | play | hello | emotion 0..9 | fixture | loopback | volume 0..100 | export | stop | status");
 }
 static int number(const char *text,unsigned lo,unsigned hi,int *value)
 {
@@ -93,7 +105,7 @@ static void command(char *out,int out_len,int argc,char **argv)
         if(busy){QM_LOGI(TAG,"STOP requested; bounded cleanup pending");return;}job=JOB_STOP;
     }else if(argc==2 && !strcmp(argv[1],"play")){job=JOB_PLAY;
     }else if(argc==2 && !strcmp(argv[1],"hello")){job=JOB_HELLO;
-    }else if(argc==3 && !strcmp(argv[1],"emotion") && number(argv[2],0,7,&n)){job=JOB_EMOTION_FIRST-n;
+    }else if(argc==3 && !strcmp(argv[1],"emotion") && number(argv[2],0,9,&n)){job=JOB_EMOTION_FIRST-n;
     }else if(argc==2 && !strcmp(argv[1],"fixture")){job=JOB_FIXTURE;
     }else if(argc==2 && !strcmp(argv[1],"loopback")){job=JOB_LOOPBACK;
     }else if(argc==2 && !strcmp(argv[1],"export")){job=JOB_EXPORT;
@@ -217,6 +229,8 @@ static void worker(void *arg)
         case 4: pcm=lamp_robot_water_start;bytes=(uint32_t)(lamp_robot_water_end-lamp_robot_water_start);break;
         case 5: pcm=lamp_music_water_start;bytes=(uint32_t)(lamp_music_water_end-lamp_music_water_start);break;
         case 6: pcm=lamp_robot_stretch_start;bytes=(uint32_t)(lamp_robot_stretch_end-lamp_robot_stretch_start);break;
+        case 9: pcm=lamp_robot_stretch_ahh_start;bytes=(uint32_t)(lamp_robot_stretch_ahh_end-lamp_robot_stretch_ahh_start);break;
+        case 8: pcm=lamp_robot_chuckle_start;bytes=(uint32_t)(lamp_robot_chuckle_end-lamp_robot_chuckle_start);break;
         case 7: pcm=lamp_music_stretch_start;bytes=(uint32_t)(lamp_music_stretch_end-lamp_music_stretch_start);break;
             }
             ret=pcm?play_buffer(pcm,bytes,"ORIGINAL_LAMP_EMOTION"):-QM_EINVAL;
@@ -249,6 +263,9 @@ void offline_audio_test_start(void)
     if(xTaskCreate(worker,"offline_audio",8192,NULL,8,&task)!=pdPASS){QM_LOGE(TAG,"ERROR worker allocation");return;}
     if(lamp_led_cli_init()!=QM_EOK){QM_LOGE(TAG,"ERROR LED CLI init");}
     network_setup_init();
+    lamp_wireless_init();
     QM_LOGI(TAG,"INIT PSRAM=%lu fixture_bytes=%lu fixture_fnv32=%08lx volume=%u UART0=115200",(unsigned long)PCM_CAPACITY,(unsigned long)fixture,(unsigned long)fnv32(offline_music_pcm_start,fixture),s_volume);
 }
+
+void lamp_remote_audio(int argc,char **argv){command(NULL,0,argc,argv);}
 #endif

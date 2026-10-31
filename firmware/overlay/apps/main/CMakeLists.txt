@@ -50,6 +50,7 @@ set(COMPONENT_SRCS
     "./offline_audio_test_v3.c"
     "./actuator_test.c"
     "./lamp_led.c"
+    "./wireless.c"
     "./camera_test.c"
     "./cloud/network_setup.c"
     "./agent/agent_app.c"
@@ -287,7 +288,7 @@ endif()
 
 set(COMPONENT_REQUIRES
     esp_driver_uart esp_driver_gpio esp_timer driver vfs
-    esp_wifi esp_netif esp_event nvs_flash bt mbedtls esp-tls
+    esp_wifi esp_netif esp_event nvs_flash bt mbedtls esp-tls esp_http_server app_update
     esp-idf-lib__mpu6050
     espressif__led_strip
 )
@@ -324,6 +325,8 @@ if(OFFLINE_AUDIO_TEST)
     target_add_binary_data(${COMPONENT_LIB} "lamp_music_water.pcm" BINARY RENAME_TO lamp_music_water)
     target_add_binary_data(${COMPONENT_LIB} "lamp_robot_stretch.pcm" BINARY RENAME_TO lamp_robot_stretch)
     target_add_binary_data(${COMPONENT_LIB} "lamp_music_stretch.pcm" BINARY RENAME_TO lamp_music_stretch)
+    target_add_binary_data(${COMPONENT_LIB} "lamp_robot_chuckle.pcm" BINARY RENAME_TO lamp_robot_chuckle)
+    target_add_binary_data(${COMPONENT_LIB} "lamp_robot_stretch_ahh.pcm" BINARY RENAME_TO lamp_robot_stretch_ahh)
     message(WARNING "OFFLINE_AUDIO_TEST: no product/cloud/pose; command-only servos and motor module")
 endif()
 

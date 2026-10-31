@@ -49,6 +49,67 @@ def sample_motion(start,row,elapsed,cap):
         ease=u*u*u*(10+u*(-15+6*u));values.append(round(a+(b-a)*ease))
     return values,duration
 
+def coordinated_row(start,row,cap,base_start):
+    result=dict(row)
+    if 'base_pulse' in row:
+        result['seconds']=max(trajectory_duration(start,row,cap),abs(row['base_pulse']-base_start)/600)
+    return result
+
+def sad_light(origin,progress):
+    progress=max(0,min(1,progress));level=max(origin) or 26
+    blue=[0,0,level]
+    if progress<=.65:return lerp(origin,blue,progress/.65)
+    return [0,0,round(level*(1-.8*(progress-.65)/.35))]
+
+def build_sad(p,roles,music=False,base_start=1500):
+    rows=build_gesture(p,roles,'Slump',music)[:3]
+    for row in rows:row.pop('light_rgb',None)
+    extreme=500 if base_start>1500 else 2500
+    rows[0].update(name='Sad · take a breath',light_progress=0)
+    rows[1].update(name='Sad · turn away and lower the head',seconds=1.8,pause=0,sound=2 if music else 0,
+                   base_pulse=round(base_start+(extreme-base_start)*.65),light_progress=.65)
+    rows[2].update(name='Sad · curl inward and fade to dim blue',seconds=1.4,pause=.5,base_pulse=extreme,light_progress=1)
+    return rows
+
+def emotion_light(origin,row):
+    if 'light_rgb' in row:return row['light_rgb'].copy()
+    if 'warm_level' in row:
+        peak=max(64,min(180,max(origin)))
+        return [round(channel*peak*row['warm_level']/255) for channel in (255,196,180)]
+    return sad_light(origin,row['light_progress'])
+
+def sample_emotion_light(origin,row,start,t):
+    t=max(0,min(1,t));target=emotion_light(origin,row)
+    rgb=lerp(start,target,t*t*(3-2*t))
+    if 'light_breathe' in row:
+        scale=.7+.3*math.cos(2*math.pi*row['light_breathe']*t)
+        rgb=[round(v*scale) for v in rgb]
+    return rgb
+
+def build_happy(p,roles,music=False):
+    home=p['poses'][roles['Rest']].copy();xy,heading=geometry(p,home)
+    side=1 if xy[-1][0]>=0 else -1
+    base=p.get('base_position',{});front=max(0,min(180,base.get('front',90)))
+    def yaw(delta):
+        angle=max(0,min(180,front+delta))
+        return round(500+(180-angle if base.get('reverse',False) else angle)*2000/180)
+    lifted=body(p,home,side*8,-22,heading-side*10,reach=240,head_limit=350)
+    rows=[]
+    def add(name,pose,seconds,yaw_offset,level,sound=-1):
+        row=dict(name=name,pulse=pose.copy(),seconds=seconds,pause=0,sound=sound,easing='quintic',
+                 delays=[0,0,0],gesture_speed=600,base_pulse=yaw(yaw_offset),warm_level=level)
+        previous=rows[-1]['pulse'] if rows else home
+        if not clear_path(p,previous,row,side):row['pulse']=previous.copy()
+        rows.append(row)
+    add('Happy · did you see what I did?',home,.6,0,.45)
+    add('Cheeky grin · head up and a sideways glance',lifted,.65,-12,1,3 if music else 8)
+    for n,(offset,level,tilt_angle) in enumerate(((12,.22,7),(-12,1,-6),(12,.22,7),(-8,1,-4))):
+        pose=face(p,lifted,geometry(p,lifted)[1]+side*tilt_angle,home,350)
+        add('Hehe · playful wiggle '+str(n+1),pose,.48,offset,level)
+    add('An innocent little nod',face(p,home,heading+side*6,home,350),.4,5,.35)
+    add('Who, me? · warm happy rest',home,.55,0,.65)
+    return rows
+
 def build_slow_gesture(p,roles,kind,music=False):
     home=p['poses'][roles['Rest']].copy();xy,heading=geometry(p,home)
     forward=1 if math.cos(math.radians(heading))>=0 else -1
@@ -181,6 +242,10 @@ def build_gesture(p,roles,kind,music=False,intensity=1.):
     custom=not roles[kind].startswith('Starter ')
     def target(x,y,angle):return broad_pose(p,home,side*size*x,-size*y,angle)
     def turn(pose,delta):return face(p,pose,geometry(p,pose)[1]+delta,home,2000)
+    base=p.get('base_position',{});front=max(0,min(180,base.get('front',90)))
+    def yaw(angle):
+        angle=max(0,min(180,angle))
+        return round(500+(180-angle if base.get('reverse',False) else angle)*2000/180)
     def add(name,pose,seconds,pause=0,sound=-1,delays=(0,.04,.08)):
         row=dict(name=name,pulse=lerp(home,pose,intensity),seconds=seconds,pause=pause,sound=sound,easing='quintic',delays=list(delays),gesture_speed=600)
         start=rows[-1]['pulse'] if rows else home
@@ -197,25 +262,50 @@ def build_gesture(p,roles,kind,music=False,intensity=1.):
     if kind=='Slump':
         curled=p['poses'][roles[kind]].copy() if custom else target(.3,.15,side*78)
         droop=target(.6,.35,side*85)
-        add('Oh no… · head hangs heavily',droop,.55,sound=2 if music else 0,delays=(.08,.04,0))
+        add('Head hangs heavily · silent descent',droop,.55,delays=(.08,.04,0))
         add('Collapse · fold into a deep sad curl',curled,.85,.18,delays=(.04,0,.06))
-        add('Notice you · gather courage',lerp(curled,home,.32),.4,0,delays=(.04,.02,0))
-        add('Relief · open back up',home,.8,sound=3 if music else 1,delays=(.05,.02,0))
+        add('Relief · recover directly to good posture',home,1.05,sound=3 if music else 1,delays=(0,0,0))
     elif kind=='Water':
         recoil=target(.3,.7,-side*80)
         reach=p['poses'][roles[kind]].copy() if custom else target(.94,.13,side*18)
         point=target(.83,.16,side*80)
         add('Hey! · pull back and look at you',recoil,.65,.08)
+        rows[-1]['base_pulse']=yaw(base.get('water_angle',front+90 if front<=90 else front-90))
         add('Look · a big invitation toward the bottle',reach,.9,.1,5 if music else 4,delays=(.06,.02,0))
         add('There! · an emphatic pointing bow',point,.5,.25)
         add('Relax to rest',home,.75)
+        rows[-1]['base_pulse']=yaw(front)
     elif kind=='Stretch':
         coil=target(.32,.2,side*70)
         tall=p['poses'][roles[kind]].copy() if custom else target(.08,.98,-side*90)
         open_face=target(.12,.8,-side*15)
         add('Gather a breath · curl all the way in',coil,.65,.12)
+        rows[-1]['base_pulse']=yaw(front-15)
         add('Aaaah · unfold into a full tall stretch',tall,1.1,.3,7 if music else 6,delays=(.03,0,.05))
+        rows[-1]['base_pulse']=yaw(front+15)
+        for n,delta in enumerate((10,-10,8,-6,0)):
+            tremble=tall.copy();tremble[2]=max(500,min(2500,tall[2]+delta))
+            tremble[1]=max(500,min(2500,tall[1]+round(delta*.6)))
+            add('Stretch tremble '+str(n+1),tremble,.13,delays=(0,0,0))
         add('Enjoy it · open the face wide',open_face,.6,.15)
+        rows[-1]['base_pulse']=yaw(front-10)
         add('Soft landing · relaxed and happy',home,.85)
+        rows[-1]['base_pulse']=yaw(front)
     else:raise ValueError('Unknown action')
+    if kind in ('Water','Stretch'):rows[0]['base_pulse']=yaw(front)
+    if kind=='Slump':
+        for row in rows:row['light_rgb']=[22,8,2]
+        rows[0]['light_rgb']=[60,28,8];rows[-1]['light_rgb']=[145,65,18]
+    elif kind=='Stretch':
+        for i,row in enumerate(rows):
+            t=i/max(1,len(rows)-1);row['light_rgb']=lerp([80,125,75],[5,85,20],t)
+        rows[-1]['sound']=9
+    elif kind=='Water':
+        for row in rows:row['light_rgb']=[25,80,130]
+        index=next(i for i,row in enumerate(rows) if 'pointing bow' in row['name'])
+        point=rows[index];point['light_rgb']=[100,135,150]
+        hold=dict(point,name='Water · slow blue-to-white breathing invitation',seconds=3.2,pause=0,
+                  sound=-1,light_rgb=[145,150,150],light_breathe=2)
+        rows.insert(index+1,hold);rows[-1]['light_rgb']=[90,125,145]
+    rows[0]['seconds']=max(rows[0]['seconds'],.7)
     return rows

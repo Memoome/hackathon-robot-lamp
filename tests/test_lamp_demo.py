@@ -101,7 +101,11 @@ for name in ('robot_slump','robot_recover','music_slump','music_recover','robot_
     with wave.open(str(folder/'sounds'/f'{name}.wav'),'rb') as w:
         assert (w.getnchannels(),w.getsampwidth(),w.getframerate())==(1,2,16000)
         assert w.readframes(w.getnframes())==pcm
+import tempfile
+profile_temp=tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).resolve().parent)
+original_here=lamp.HERE;lamp.HERE=pathlib.Path(profile_temp.name)
 root=lamp.tk.Tk();root.withdraw();app=lamp.LampDemo(root);root.update()
+lamp.HERE=original_here
 assert not app.connected and app.cfg['upright']==lamp.STARTER_UPRIGHT and app.cfg['slump']==lamp.STARTER_SLUMP
 assert str(app.slump_button['state'])=='disabled'
 assert str(app.water_button['state'])=='disabled'
@@ -120,4 +124,5 @@ for tab in app.tabs.tabs():
     frame=root.nametowidget(tab)
     assert frame.winfo_reqheight()<=frame.winfo_height(),(frame.winfo_reqheight(),frame.winfo_height())
 root.destroy()
+profile_temp.cleanup()
 print('Passed: slump/recovery, water, stretch in both styles; Stop blocks return and ending cue; old firmware blocked before motion; bounds/commands/profile compatibility; eight audio assets; GUI tabs and idle/no commands.')

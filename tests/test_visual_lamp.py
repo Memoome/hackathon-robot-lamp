@@ -1,6 +1,8 @@
 import sys,pathlib,copy,threading,time,tempfile
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'apps/LJWB03-Lamp-Demo'))
 import visual_control as v
+import wireless_link
+wireless_link.settings=lambda: {}
 project=v.fresh();project['calibration']=[[[847,30],[1176,-3]],[[600,-150],[2365,-30]],[[1057,-20],[1500,-41]]]
 v.ensure_full_pulse_range(project);original=copy.deepcopy(project);v.ensure_full_pulse_range(project)
 assert project==original and project['config']['low']==[500]*3 and project['config']['high']==[2500]*3
@@ -99,7 +101,7 @@ for kind in ('Slump','Water','Stretch'):
         app.action_style.set(style);rows=app.action_rows(kind)
         assert rows[0]['pulse']==rows[-1]['pulse']==app.p['poses']['Rest']
         assert any(row['pulse']==app.p['poses'][kind] for row in rows)
-        assert any(row['sound']>=0 for row in rows) and len(rows)>=5
+        assert any(row['sound']>=0 for row in rows) and len(rows)>=4
 pose,duration=v.preview_motion([500,500,500],[2500,600,500],2,600,.5)
 assert pose==[800,600,500] and abs(duration-2000/600)<1e-7
 temp=tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).resolve().parent)

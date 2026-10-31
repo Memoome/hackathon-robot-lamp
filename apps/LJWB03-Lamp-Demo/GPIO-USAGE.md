@@ -8,7 +8,7 @@ Updated 31 October 2026. This is the current project's wiring map, not a list of
 | **12** | Lift / joint 1 | Output, 50Hz servo | MG996R position servo. |
 | **10** | Elbow / joint 2 | Output, 50Hz servo | MG90S position servo. |
 | **11** | Lamp-head tilt / joint 3 | Output, 50Hz servo | SG90 position servo. Previously called end plate. |
-| **15** | Rotating base | Output, 50Hz servo | MG90S continuous rotation. Pulse controls speed/direction, not angle; nominal stop1500µs. Future180° servo requires a different control mode. |
+| **15** | Rotating base | Output, 50Hz servo | Current Studio uses an SG90 position base on GPIO15. Its angle is a command estimate, not encoder feedback. The earlier continuous MG90S used a different speed/direction mode; do not use position controls with that motor. |
 | **21** | Camera SDA | Bidirectional, I2C | BF3901 adapter control data. |
 | **47** | Camera SCL | Output, I2C clock | BF3901 adapter control clock. |
 | **4** | Camera VSYNC | Input | Driver treats this as frame/CS signal. Do not enable old single-servo GPIO4 example. |

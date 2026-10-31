@@ -37,7 +37,7 @@
 
 ```c
 #define CONFIG_XJIANG_CLOUD_PID    11665
-#define CONFIG_XJIANG_CLOUD_SECERT "F7B6033204064B698FEDE033605DDDBA"
+#define CONFIG_XJIANG_CLOUD_SECERT ""
 ```
 
 换正式产品改这一处，下行 topic 随之变成 `/<PID>/<DID>/device/down`。

@@ -4,12 +4,9 @@
 #include "qm_spec_api.h"
 
 /* 灵机平台产品身份。换产品改这里。 */
-/*
- * 说明：产品身份由各开发同学按自己云平台产品覆盖使用；当前分支上游（11665）与本机
- * 课程表联调产品（11682）不同，合入时保留课程表联调产品，切产品时改这两行即可。
- */
-#define CONFIG_XJIANG_CLOUD_PID    11682
-#define CONFIG_XJIANG_CLOUD_SECERT "14A9767C1CCA4BD3A03690A52A388E49"
+/* Configure your own product locally; never commit its secret. */
+#define CONFIG_XJIANG_CLOUD_PID    0
+#define CONFIG_XJIANG_CLOUD_SECERT ""
 
 #ifdef __cplusplus
 extern "C" {
