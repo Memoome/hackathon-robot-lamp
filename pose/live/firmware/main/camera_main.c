@@ -1,5 +1,5 @@
-#include "pose_engine.h"
 #include "detect_engine.h"
+#include "presence.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +46,9 @@ static esp_cam_sensor_format_t sensor_format;
 #define JPEG_OUT_BYTES (64*1024)
 #define JPEG_CHUNK 144
 static volatile int preview_every,preview_busy,snap_request,jpeg_quality=80;
+// 0 = off; otherwise send a JPEG when the main box is stable and this many seconds have passed.
+static volatile int auto_snap_s,calib_request,sit_watch_s=40*60,sit_alert_s=45*60;
+static presence_t presence;
 static uint8_t *jpeg_in,*jpeg_out;
 static unsigned preview_seq;
 static int64_t preview_t_ms;
@@ -94,7 +97,7 @@ static uint32_t fnv32(const uint8_t *p,uint32_t n)
 // stdout is unbuffered, so printf issues several writes; two tasks would interleave mid-line.
 static void out_line(const char *fmt,...)
 {
-    char buf[320];
+    char buf[512];
     va_list ap;va_start(ap,fmt);
     int n=vsnprintf(buf,sizeof(buf),fmt,ap);
     va_end(ap);
@@ -240,17 +243,19 @@ static esp_err_t stream(void)
     int type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if(ioctl(fd,VIDIOC_STREAMON,&type)!=0){err=ESP_FAIL;goto done;}
     streaming=1;
-    snap_request=0;
-    ESP_LOGI(TAG,"STREAM_START width=%lu height=%lu fourcc=%08lx preview_every=%d warmup_frames=3",(unsigned long)width,(unsigned long)height,(unsigned long)fourcc,preview_every);
+    snap_request=calib_request=0;
+    ESP_LOGI(TAG,"STREAM_START width=%lu height=%lu fourcc=%08lx preview_every=%d auto_snap_s=%d warmup_frames=3",(unsigned long)width,(unsigned long)height,(unsigned long)fourcc,preview_every,auto_snap_s);
     int warm=0;
-    unsigned valid=0,bad=0,dq_fail=0,dets=0,previews=0,skipped=0;
+    unsigned valid=0,bad=0,dq_fail=0,dets=0,previews=0,skipped=0,autos=0;
     int64_t last_valid=esp_timer_get_time(),last_det=0,stats_at=last_valid+5000000;
+    int64_t last_presence=0,last_auto=0;
+    presence_init(&presence,last_valid/1000);
     while(!cancelled) {
         int64_t now=esp_timer_get_time();
         if(now-last_valid>3000000){err=ESP_ERR_TIMEOUT;break;}
         if(now>=stats_at) {
-            out_line("STREAM_STATS {\"valid\":%u,\"bad\":%u,\"dq_fail\":%u,\"det\":%u,\"preview\":%u,\"preview_skipped\":%u,\"psram_free\":%u}\r\n",
-                   valid,bad,dq_fail,dets,previews,skipped,(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+            out_line("STREAM_STATS {\"valid\":%u,\"bad\":%u,\"dq_fail\":%u,\"det\":%u,\"preview\":%u,\"preview_skipped\":%u,\"auto_snap\":%u,\"psram_free\":%u}\r\n",
+                   valid,bad,dq_fail,dets,previews,skipped,autos,(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
             stats_at=now+5000000;
         }
         struct v4l2_buffer b={.type=V4L2_BUF_TYPE_VIDEO_CAPTURE,.memory=V4L2_MEMORY_MMAP};
@@ -270,16 +275,37 @@ static esp_err_t stream(void)
                     else {
                         memcpy(jpeg_in,src,FRAME_BYTES);
                         preview_seq=sequence;preview_t_ms=last_valid/1000;
-                        preview_reason=want_snap?"snap":"preview";
+                        preview_reason=want_snap==2?"auto":want_snap?"snap":"preview";
                         if(want_snap)snap_request=0;
                         preview_busy=1;++previews;
                         xTaskNotifyGive(preview_task_handle);
                     }
                 }
                 double cycle=last_det?(last_valid-last_det)/1000.0:0;
-                err=detect_engine_stream(src,width,height,fourcc,rotation,sequence,last_valid/1000,cycle);
+                presence_box_t boxes[PRESENCE_MAX_BOXES];int nbox=0,fw=0,fh=0;
+                err=detect_engine_stream(src,width,height,fourcc,rotation,sequence,last_valid/1000,cycle,boxes,&nbox,&fw,&fh);
                 last_det=last_valid;
                 ++dets;
+                if(err==ESP_OK) {
+                    int64_t t=last_valid/1000;
+                    if(calib_request){calib_request=0;presence_calibrate(&presence,t);}
+                    presence.sit_watch_s=sit_watch_s;presence.sit_alert_s=sit_alert_s;
+                    int r=presence_update(&presence,t,boxes,nbox,fw,fh);
+                    if(r&6) {
+                        if(r&2)out_line("PRESENCE_CALIB {\"ok\":true,\"seq\":%u,\"source\":\"%s\",\"area\":%.0f,\"top\":%.1f,\"height\":%.1f}\r\n",sequence,presence.calib_source==CALIB_AUTO?"auto":"manual",presence.base_area,presence.base_top,presence.base_h);
+                        else out_line("PRESENCE_CALIB {\"ok\":false,\"seq\":%u,\"reason\":\"no_person\"}\r\n",sequence);
+                    }
+                    if((r&1) || t-last_presence>=1000) {
+                        char json[480];
+                        presence_json(&presence,sequence,t,json,sizeof(json));
+                        out_line("PRESENCE %s\r\n",json);
+                        last_presence=t;
+                    }
+                    // The next frame goes out; the encoder may still be busy, then it waits.
+                    if(auto_snap_s>0 && !snap_request && presence_stable(&presence) && t-last_auto>=auto_snap_s*1000LL) {
+                        snap_request=2;last_auto=t;++autos;
+                    }
+                }
             }
         } else ++bad;
         if(ioctl(fd,VIDIOC_QBUF,&b)!=0){err=ESP_FAIL;break;}
@@ -378,8 +404,7 @@ done:
     }
     if(thumb)free(thumb);
     if(err==ESP_OK && raw && !cancelled) {
-        if(job==3) err=detect_engine_run(raw,width,height,fourcc,rotation,sequence,&cancelled);
-        else err=pose_engine_run(raw,width,height,fourcc,rotation,sequence,&cancelled);
+        err=detect_engine_run(raw,width,height,fourcc,rotation,sequence,&cancelled);
     }
     if(raw)free(raw);
     return err;
@@ -431,7 +456,27 @@ static void command(char *out,int len,int argc,char **argv)
         return;
     }
     if(argc==3 && !strcmp(argv[1],"pose")){pose_command(argv[2]);return;}
-    int job=argc!=2?0:!strcmp(argv[1],"probe")?1:!strcmp(argv[1],"capture")?2:!strcmp(argv[1],"detect")?3:!strcmp(argv[1],"stream_start")?4:0;
+    if(argc==3 && !strcmp(argv[1],"auto_snap")) {
+        char *end=NULL;long n=strtol(argv[2],&end,10);
+        if(end && !*end && n>=0 && n<=600){auto_snap_s=(int)n;ESP_LOGI(TAG,"LIVE_AUTO_SNAP seconds=%d",auto_snap_s);}
+        else ESP_LOGW(TAG,"CAM_ERROR auto_snap_range");
+        return;
+    }
+    if(argc==2 && !strcmp(argv[1],"calib")) {
+        if(!busy){ESP_LOGW(TAG,"CAM_ERROR calib_needs_stream");return;}
+        calib_request=1;ESP_LOGI(TAG,"LIVE_CALIB requested");
+        return;
+    }
+    // Sedentary thresholds in seconds; shortened only for testing.
+    if(argc==4 && !strcmp(argv[1],"sit_limits")) {
+        char *e1=NULL,*e2=NULL;long w=strtol(argv[2],&e1,10),a=strtol(argv[3],&e2,10);
+        if(e1 && !*e1 && e2 && !*e2 && w>=1 && a>=w && a<=24*3600){sit_watch_s=(int)w;sit_alert_s=(int)a;ESP_LOGI(TAG,"LIVE_SIT_LIMITS watch=%d alert=%d",sit_watch_s,sit_alert_s);}
+        else ESP_LOGW(TAG,"CAM_ERROR sit_limits_range");
+        return;
+    }
+    // The on-board COCO Pose model was removed in P3; pose now runs on the PC from stream JPEGs.
+    if(argc==2 && !strcmp(argv[1],"capture")){ESP_LOGW(TAG,"CAM_ERROR capture_removed use=stream_start");return;}
+    int job=argc!=2?0:!strcmp(argv[1],"probe")?1:!strcmp(argv[1],"detect")?3:!strcmp(argv[1],"stream_start")?4:0;
     if(!job){ESP_LOGW(TAG,"CAM_ERROR invalid_command");return;}
     portENTER_CRITICAL(&mux);int reject=busy;if(!reject){busy=1;cancelled=0;}portEXIT_CRITICAL(&mux);
     if(reject){ESP_LOGW(TAG,"CAM_ERROR busy");return;}
@@ -452,7 +497,6 @@ void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "VSYNC_FILTER gpio=4 enabled=1 window=fixed_two_iomux_cycles");
-    if(pose_engine_init()!=ESP_OK) {ESP_LOGE(TAG,"LIVE_ERROR model_init");return;}
     if(detect_engine_init()!=ESP_OK) {ESP_LOGE(TAG,"LIVE_ERROR detect_model_init");return;}
     jpeg_in=jpeg_calloc_align(FRAME_BYTES,16);
     jpeg_out=heap_caps_malloc(JPEG_OUT_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
@@ -468,7 +512,7 @@ void app_main(void)
     if(uart_driver_install(CONFIG_ESP_CONSOLE_UART_NUM,2048,0,0,NULL,0)==ESP_OK)
         uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
     else ESP_LOGW(TAG,"LIVE_WARN console_rx_driver");
-    ESP_LOGI(TAG,"LIVE_READY model=YOLO11N_S3_V1 baud=%d capture=OFF no_motor=1 no_audio=1 no_network=1 psram=%u", CONFIG_ESP_CONSOLE_UART_BAUDRATE,(unsigned)esp_psram_get_size());
+    ESP_LOGI(TAG,"LIVE_READY model=PEDESTRIAN_PICO_S8_V1 baud=%d capture=OFF no_motor=1 no_audio=1 no_network=1 psram=%u", CONFIG_ESP_CONSOLE_UART_BAUDRATE,(unsigned)esp_psram_get_size());
     char line[512]; unsigned used=0; int overflow=0;
     for(;;) {
         int c=getchar();
@@ -476,8 +520,8 @@ void app_main(void)
         if(c=='\r' || c=='\n') {
             line[used]=0;
             if(!overflow && used) {
-                char *save=NULL; char *argv[3]; int argc=0;
-                for(char *p=strtok_r(line," ", &save);p && argc<3;p=strtok_r(NULL," ",&save)) argv[argc++]=p;
+                char *save=NULL; char *argv[4]; int argc=0;
+                for(char *p=strtok_r(line," ", &save);p && argc<4;p=strtok_r(NULL," ",&save)) argv[argc++]=p;
                 if(argc>=2 && !strcmp(argv[0],"cam_test")) command(NULL,0,argc,argv);
                 else ESP_LOGW(TAG,"CAM_ERROR invalid_command argc=%d first=%.24s",argc,argc?argv[0]:"");
             }

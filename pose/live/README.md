@@ -102,6 +102,19 @@ posture verdict and answers `POSE_RX {json}`; it is logged, not acted on.
 `STREAM_STATS` reports valid/bad frames every 5 s. Console input uses the UART
 driver (2 KB buffer) so commands are not lost while both cores are busy.
 
+Since P3 the board no longer loads the COCO Pose model (`cam_test capture`
+answers `CAM_ERROR capture_removed`; the `coco_pose` partition is left
+untouched). `firmware/main/presence.c` derives presence states from the
+detection boxes on the board: away/back (10 s / 3 s), sedentary time (40/45
+min watch/alert, cleared after a 2 min absence), too close (box area >= 1.5x
+baseline) and standing (box top raised > 20% of baseline height). It prints
+`PRESENCE {json}` on every change and once per second. `cam_test calib`
+records the box baseline (`PRESENCE_CALIB {json}`), `cam_test auto_snap N`
+sends a JPEG every N s while the main box is stable (reason `auto`, 0 = off),
+and `cam_test sit_limits W A` shortens the sedentary thresholds for testing.
+All thresholds are provisional. The state machine has a host test:
+`firmware/test/test_presence.c`, run by `host/test_presence_fw.py`.
+
 The web viewer's detection mode uses this stream: each received JPEG runs
 YOLO26-pose on the PC (`host/pose_pc.py`), the posture rules in
 `host/posture_states.py` (head on desk, head down, head tilt, uneven

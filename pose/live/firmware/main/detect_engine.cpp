@@ -25,7 +25,7 @@ extern "C" esp_err_t detect_engine_init(void)
 }
 
 static esp_err_t infer(const uint8_t *raw,int w,int h,uint32_t fourcc,int rotation,int *rw,int *rh,
-                       double *prep_ms,double *infer_ms,std::string &people)
+                       double *prep_ms,double *infer_ms,std::string &people,presence_box_t *boxes=nullptr,int *box_count=nullptr)
 {
     if(!model || !rgb || !raw || w*h>240*320 || (fourcc!=V4L2_PIX_FMT_UYVY && fourcc!=V4L2_PIX_FMT_YUYV))return ESP_ERR_INVALID_ARG;
     *rw=(rotation==90||rotation==270)?h:w;
@@ -61,7 +61,9 @@ static esp_err_t infer(const uint8_t *raw,int w,int h,uint32_t fourcc,int rotati
         char person[160];
         snprintf(person,sizeof(person),"{\"score\":%.4f,\"box\":[%d,%d,%d,%d],\"center\":[%d,%d]}",r.score,r.box[0],r.box[1],r.box[2],r.box[3],cx,cy);
         people+=person;
+        if(boxes){boxes[count-1].score=r.score;for(int i=0;i<4;i++)boxes[count-1].box[i]=r.box[i];}
     }
+    if(box_count)*box_count=(int)count;
     return ESP_OK;
 }
 
@@ -76,11 +78,13 @@ extern "C" esp_err_t detect_engine_run(const uint8_t *raw,int w,int h,uint32_t f
     return ESP_OK;
 }
 
-extern "C" esp_err_t detect_engine_stream(const uint8_t *raw,int w,int h,uint32_t fourcc,int rotation,unsigned sequence,int64_t t_ms,double cycle_ms)
+extern "C" esp_err_t detect_engine_stream(const uint8_t *raw,int w,int h,uint32_t fourcc,int rotation,unsigned sequence,int64_t t_ms,double cycle_ms,
+                                          presence_box_t *boxes,int *box_count,int *out_w,int *out_h)
 {
     int rw,rh;double prep,elapsed;std::string people;
-    esp_err_t err=infer(raw,w,h,fourcc,rotation,&rw,&rh,&prep,&elapsed,people);
+    esp_err_t err=infer(raw,w,h,fourcc,rotation,&rw,&rh,&prep,&elapsed,people,boxes,box_count);
     if(err!=ESP_OK)return err;
+    *out_w=rw;*out_h=rh;
     char header[192];
     snprintf(header,sizeof(header),"DET {\"seq\":%u,\"t_ms\":%lld,\"width\":%d,\"height\":%d,\"rotation\":%d,\"prep_ms\":%.1f,\"infer_ms\":%.1f,\"cycle_ms\":%.1f,\"people\":[",
              sequence,(long long)t_ms,rw,rh,rotation,prep,elapsed,cycle_ms);

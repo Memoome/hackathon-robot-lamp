@@ -155,6 +155,19 @@ def validate_det(det,rotation):
     validate_result(dict(det,id=det['seq'],inference_ms=det.get('infer_ms')),{'id':det['seq'],'rotation':rotation},'detect')
     return dict(det,id=det['seq'],inference_ms=det['infer_ms'],mode='detect')
 
+PRESENCE_LEVELS=('unknown','ok','watch','alert')
+
+def validate_presence(p):
+    st=p.get('states')
+    if not isinstance(p.get('seq'),int) or not isinstance(p.get('sit_s'),int) or p['sit_s']<0 or not isinstance(st,dict):
+        raise ValueError('Invalid PRESENCE')
+    if not isinstance(st.get('away'),bool) or not isinstance(st.get('standing'),bool) or \
+       st.get('sedentary') not in PRESENCE_LEVELS or st.get('too_close') not in PRESENCE_LEVELS:
+        raise ValueError('Invalid PRESENCE states')
+    if p.get('event') not in (None,'leave','back'):raise ValueError('Invalid PRESENCE event')
+    if p.get('calib_source') not in (None,'auto','manual'):raise ValueError('Invalid PRESENCE calibration source')
+    return p
+
 def set_rotation(s,rotation,diagnostic):
     s.write(f'cam_test rotate{rotation}\n'.encode())
     deadline=time.monotonic()+3
@@ -220,6 +233,10 @@ def receive_stream(s,stop,emit,rotation,diagnostic=None,idle_timeout=5,commands=
             if line.startswith('JPEG_ERROR ') and not stop.is_set():emit('board_warning',line)
         elif line.startswith('POSE_RX '):
             if not stop.is_set():emit('pose_rx',json.loads(line[len('POSE_RX '):]))
+        elif line.startswith('PRESENCE '):
+            if not stop.is_set():emit('presence',validate_presence(json.loads(line[len('PRESENCE '):])))
+        elif line.startswith('PRESENCE_CALIB '):
+            if not stop.is_set():emit('presence_calib',json.loads(line[len('PRESENCE_CALIB '):]))
         elif line.startswith('STREAM_STATS '):
             if not stop.is_set():emit('stats',json.loads(line[len('STREAM_STATS '):]))
         elif 'CAM_DONE ' in line:
@@ -231,8 +248,9 @@ def receive_stream(s,stop,emit,rotation,diagnostic=None,idle_timeout=5,commands=
             # A rejected command (invalid_command, pose_format, busy…) does not end the stream.
             emit('board_warning',line)
 
-def stream_session(stop,emit,rotation=90,preview_every=10,commands=None):
+def stream_session(stop,emit,rotation=90,preview_every=10,commands=None,auto_snap=0):
     if type(preview_every) is not int or not 0<=preview_every<=1000:raise ValueError('Invalid preview interval')
+    if type(auto_snap) is not int or not 0<=auto_snap<=600:raise ValueError('Invalid auto snap interval')
     (ROOT/'evidence').mkdir(exist_ok=True)
     log_path=ROOT/'evidence'/('serial-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.log')
     with wire.connect() as s, log_path.open('w',encoding='utf-8') as log:
@@ -243,6 +261,7 @@ def stream_session(stop,emit,rotation=90,preview_every=10,commands=None):
         if not re.search(r'\bbusy=0\b',status):raise RuntimeError('摄像头已被占用；未发送采集命令。')
         set_rotation(s,rotation,diagnostic)
         s.write(f'cam_test preview {preview_every}\n'.encode())
+        s.write(f'cam_test auto_snap {auto_snap}\n'.encode())
         s.write(b'cam_test stream_start\n')
         emit('status','已连接。板端正在连续检测…')
         try:

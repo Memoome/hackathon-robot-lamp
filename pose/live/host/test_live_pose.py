@@ -134,6 +134,29 @@ class Tests(unittest.TestCase):
         self.assertEqual(frame['det']['people'][0]['center'],[155,125])
         self.assertEqual(events[3][1]['state'],'head_down')
         self.assertIn(b'cam_test stop\n',s.sent)
+    def test_stream_emits_presence_and_board_calibration(self):
+        st=dict(away=False,sedentary='watch',too_close='ok',standing=False)
+        good=dict(seq=3,t_ms=1500,present=True,stable=True,sit_s=2400,states=st,calibrated=True,event='back',metrics=dict(area_ratio=1.1,rise=0.02),main=[1,2,3,4])
+        lines=self.stream_lines();lines.insert(2,'PRESENCE '+json.dumps(good));lines.insert(3,'PRESENCE_CALIB {"ok":true,"seq":3,"area":18000,"top":60.0,"height":180.0}')
+        stop=threading.Event();events=[]
+        def emit(kind,value):
+            events.append((kind,value))
+            if kind=='stats':stop.set()
+        live.receive_stream(Serial(lines),stop,emit,90)
+        got=dict(events)
+        self.assertEqual(got['presence']['states']['sedentary'],'watch')
+        self.assertEqual(got['presence']['event'],'back')
+        self.assertTrue(got['presence_calib']['ok'])
+        for bad in (dict(good,sit_s=-1),dict(good,states=dict(st,too_close='close')),dict(good,event='gone'),dict(good,states=dict(st,away='no'))):
+            with self.assertRaises(ValueError):live.validate_presence(bad)
+    def test_stream_session_sends_auto_snap_before_start(self):
+        s=Serial(['I CAM_STATUS busy=0 error=0','I LIVE_ROTATION 90','I cam_test: CAM_DONE result=OK streaming=OFF','I CAM_STATUS busy=0 error=0'])
+        stop=threading.Event();stop.set()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(live,'ROOT',Path(tmp)),patch.object(live.wire,'connect',return_value=s):
+            live.stream_session(stop,lambda *a:None,90,0,auto_snap=3)
+        i=s.sent.index(b'cam_test auto_snap 3\n')
+        self.assertLess(i,s.sent.index(b'cam_test stream_start\n'))
+        with self.assertRaises(ValueError):live.stream_session(stop,lambda *a:None,90,0,auto_snap=601)
     def test_stream_writes_queued_commands_paced_and_logged(self):
         import queue
         q=queue.Queue();q.put(b'cam_test snap\n');q.put(b'cam_test pose {"seq":2}\n');stop=threading.Event();logged=[]

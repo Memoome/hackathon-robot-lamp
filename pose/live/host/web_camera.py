@@ -22,6 +22,8 @@ PAGE = Path(__file__).resolve().parents[1] / 'web' / 'index.html'
 
 
 def failure_message(error):
+    if 'capture_removed' in error:
+        return '当前固件已移除板端姿态模型（P3），请改用“人体检测”模式；姿态在电脑端做。'
     if 'Camera sensor is not BF3901' in error:
         return '开发板已返回错误：摄像头型号读取异常，采集已停止。详情包含实际型号；反复重连不能保证恢复。'
     if 'CAM_ERROR' in error and 'ESP_ERR_TIMEOUT' in error:
@@ -37,6 +39,7 @@ class Camera:
         self.stream = stream
         self.pose_runner = pose_runner or pose_pc.PoseRunner()
         self.preview_every = 10
+        self.auto_snap = 0
         self.reset_detections()
         self.lock = threading.RLock()
         self.commands = queue.Queue()
@@ -77,6 +80,9 @@ class Camera:
         self.dets = collections.deque(maxlen=60)
         self.det_count = 0
         self.stats = None
+        self.presence = None
+        self.presence_calib = None
+        self.presence_events = collections.deque(maxlen=20)
         # Smallest (host receive time - board result time) seen; maps board ms onto host seconds.
         self.clock_offset = None
 
@@ -89,7 +95,8 @@ class Camera:
             return sum(d[key] for d in dets) / len(dets) if dets else None
         return dict(det_count=self.det_count, det_rate=rate, infer_avg=avg('infer_ms'),
                     prep_avg=avg('prep_ms'), window=len(dets), stats=self.stats,
-                    latest=dets[-1] if dets else None, preview_every=self.preview_every)
+                    latest=dets[-1] if dets else None, preview_every=self.preview_every,
+                    auto_snap=self.auto_snap)
 
     def set_posture(self, summary, details=None, frame_id=None):
         self.posture = dict(summary=summary, details=details or {}, frame_id=frame_id,
@@ -121,6 +128,11 @@ class Camera:
                 raise ValueError('请先开始查看，再校准坐姿。')
             if self.mode == 'detect':
                 self.classifier.start_calibration()
+                # The board records its own box baseline (too close / standing) at the same moment.
+                self.presence_calib = None
+                self.commands.put(b'cam_test calib\n')
+                if self.auto_snap:
+                    self.commands.put(b'cam_test snap\n')
                 return
             self.monitor.start_calibration()
             self.set_posture(f'校准中：请保持舒适坐姿，等待 {self.monitor.calibration_samples} 次有效结果。')
@@ -145,6 +157,8 @@ class Camera:
                         posture=self.posture_status(),
                         pc_pose={k: v for k, v in self.pc_pose.items() if k != 'image'} if self.pc_pose else None,
                         pose_rx=self.pose_rx, pose_error=self.pose_error, board_warning=self.board_warning,
+                        presence=self.presence, presence_calib=self.presence_calib,
+                        presence_events=list(self.presence_events),
                         scene=self.scenes.status())
 
     def emit(self, kind, value):
@@ -164,9 +178,16 @@ class Camera:
                     est = value['host_rx'] - (value['t_ms'] + value['prep_ms'] + value['infer_ms']) / 1000
                     self.clock_offset = est if self.clock_offset is None else min(self.clock_offset, est)
                 self.phase = 'streaming'
-                self.message = '板端连续检测中；画面按设定间隔传到电脑做姿态推理。' if self.preview_every else '板端连续检测中；画面传输已关闭。'
+                self.message = (f'板端连续检测中；有人且稳定时每 {self.auto_snap} 秒自动传图到电脑做姿态推理。' if self.auto_snap else
+                                '板端连续检测中；画面按设定间隔传到电脑做姿态推理。' if self.preview_every else '板端连续检测中；画面传输已关闭。')
             elif kind == 'stats':
                 self.stats = value
+            elif kind == 'presence':
+                if value.get('event'):
+                    self.presence_events.append(dict(event=value['event'], seq=value['seq'], at=time.time()))
+                self.presence = dict(value, updated=time.time())
+            elif kind == 'presence_calib':
+                self.presence_calib = value
             elif kind == 'jpeg':
                 if self.cancel.is_set():
                     return
@@ -257,6 +278,9 @@ class Camera:
                 for old in [k for k in self.pose_sent if k < frame['seq'] - 200]:
                     del self.pose_sent[old]
                 self.commands.put(posture_states.board_message(verdict).encode())
+                # Auto mode sends a frame every few seconds; ask for the next one now so calibration is quick.
+                if self.auto_snap and self.classifier.calibrating:
+                    self.commands.put(b'cam_test snap\n')
 
     def scene(self, data):
         action = data.get('action')
@@ -279,19 +303,30 @@ class Camera:
             else:
                 raise ValueError('未知操作。')
 
+    def sit_limits(self, watch, alert):
+        """Shortens the board's sedentary thresholds (seconds) for testing; cleared on board restart."""
+        if type(watch) is not int or type(alert) is not int or not 1 <= watch <= alert <= 24 * 3600:
+            raise ValueError('久坐阈值需满足 1 ≤ 观察 ≤ 提醒 ≤ 86400 秒。')
+        with self.lock:
+            if not self.active or self.mode != 'detect':
+                raise ValueError('请先在人体检测模式下开始查看。')
+            self.commands.put(f'cam_test sit_limits {watch} {alert}\n'.encode())
+
     def snap(self):
         with self.lock:
             if not self.active or self.mode != 'detect':
                 raise ValueError('请先在人体检测模式下开始查看。')
             self.commands.put(b'cam_test snap\n')
 
-    def start(self, rotation=90, mode='pose', preview_every=10):
+    def start(self, rotation=90, mode='pose', preview_every=10, auto_snap=0):
         if type(rotation) is not int or rotation not in (0, 90, 180, 270):
             raise ValueError('方向只能是 0、90、180 或 270 度。')
         if mode not in live.MODES:
             raise ValueError('模式只能是 pose 或 detect。')
         if type(preview_every) is not int or not 0 <= preview_every <= 1000:
             raise ValueError('预览间隔只能是 0 到 1000 帧。')
+        if type(auto_snap) is not int or not 0 <= auto_snap <= 600:
+            raise ValueError('自动传图间隔只能是 0 到 600 秒。')
         with self.lock:
             if self.active or (self.worker and self.worker.is_alive()):
                 return False
@@ -303,6 +338,7 @@ class Camera:
             self.rotation = rotation
             self.mode = mode
             self.preview_every = preview_every
+            self.auto_snap = auto_snap if mode == 'detect' else 0
             self.reset_detections()
             self.count = 0
             self.pending_frame = None
@@ -324,7 +360,7 @@ class Camera:
         try:
             if self.mode == 'detect':
                 self.stream(self.cancel, self.emit, rotation=self.rotation, preview_every=self.preview_every,
-                            commands=self.commands)
+                            commands=self.commands, auto_snap=self.auto_snap)
             else:
                 self.session(self.cancel, self.emit, rotation=self.rotation, count=0, save=False, mode=self.mode)
         except Exception as exc:
@@ -396,6 +432,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, self.server.camera.status(heartbeat=True))
         if path == '/api/posture':
             return self.reply(200, self.server.camera.posture_status())
+        if path == '/api/presence':
+            st = self.server.camera.status()
+            return self.reply(200, dict(presence=st['presence'], calib=st['presence_calib'],
+                                        events=st['presence_events'], active=st['active']))
         if path in ('/frame.png', '/snapshot.png'):
             image, mime = self.server.camera.image()
             if image is None:
@@ -418,13 +458,16 @@ class Handler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             if path == '/api/start':
                 started = self.server.camera.start(data.get('rotation', 90), data.get('mode', 'pose'),
-                                                   data.get('preview_every', 10))
+                                                   data.get('preview_every', 10), data.get('auto_snap', 0))
                 return self.reply(200 if started else 409, self.server.camera.status())
             if path == '/api/stop':
                 self.server.camera.stop()
                 return self.reply(200, self.server.camera.status())
             if path == '/api/calibrate':
                 self.server.camera.calibrate()
+                return self.reply(200, self.server.camera.status())
+            if path == '/api/sit_limits':
+                self.server.camera.sit_limits(data.get('watch'), data.get('alert'))
                 return self.reply(200, self.server.camera.status())
             if path == '/api/snap':
                 self.server.camera.snap()

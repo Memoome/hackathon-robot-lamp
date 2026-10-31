@@ -98,6 +98,42 @@ class CameraTests(unittest.TestCase):
         self.assertIs(seen['commands'], camera.commands)
         self.assertEqual(camera.status()['mode'], 'detect')
 
+    def test_presence_auto_snap_and_board_calibration(self):
+        seen = {}
+        def stream(stop, emit, **kwargs):
+            seen.update(kwargs)
+            stop.wait(5)
+        camera = web.Camera(lambda *a, **k: None, stream)
+        with self.assertRaises(ValueError):
+            camera.start(90, 'detect', 0, 601)
+        self.assertTrue(camera.start(90, 'detect', 0, 3))
+        for _ in range(100):
+            if seen:
+                break
+            time.sleep(0.01)
+        self.assertEqual((seen['preview_every'], seen['auto_snap']), (0, 3))
+        self.assertEqual(camera.status()['detection']['auto_snap'], 3)
+        camera.calibrate()
+        self.assertEqual([camera.commands.get_nowait() for _ in range(2)], [b'cam_test calib\n', b'cam_test snap\n'])
+        with self.assertRaises(ValueError):
+            camera.sit_limits(90, 60)
+        camera.sit_limits(60, 90)
+        self.assertEqual(camera.commands.get_nowait(), b'cam_test sit_limits 60 90\n')
+        states = {'away': True, 'sedentary': 'ok', 'too_close': 'unknown', 'standing': False}
+        camera.emit('presence', dict(seq=5, t_ms=1, present=False, sit_s=0, states=states, event='leave'))
+        camera.emit('presence', dict(seq=6, t_ms=2, present=False, sit_s=0, states=states, event=None))
+        camera.emit('presence_calib', {'ok': True, 'seq': 6, 'area': 18000})
+        state = camera.status()
+        self.assertEqual(state['presence']['seq'], 6)
+        self.assertEqual([e['event'] for e in state['presence_events']], ['leave'])
+        self.assertTrue(state['presence_calib']['ok'])
+        camera.stop()
+        camera.worker.join(1)
+        self.assertTrue(camera.start(90, 'detect', 10))
+        self.assertIsNone(camera.status()['presence'])
+        camera.stop()
+        camera.worker.join(1)
+
     def test_scene_recording_needs_detect_stream_and_scores_detections(self):
         camera = web.Camera(lambda *a, **k: None, lambda stop, emit, **k: stop.wait(5))
         with self.assertRaises(ValueError):
@@ -131,6 +167,7 @@ class CameraTests(unittest.TestCase):
                    mode='detect', host_rx=50.15)
         camera.emit('det', det)
         camera.calibrate()
+        self.assertEqual(camera.commands.get_nowait(), b'cam_test calib\n')
         for _ in range(3):
             camera.emit('jpeg', dict(seq=7, t_ms=1000, bytes=4, data=b'\xff\xd8xx', rotation=90, host_rx=50.4,
                                      det=det, enc_ms=33.0, quality=80, reason='preview'))
