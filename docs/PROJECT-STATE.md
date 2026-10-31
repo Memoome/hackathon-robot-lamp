@@ -1,0 +1,15 @@
+# Team handoff · 31 October 2026
+
+Hardware is an ESP32-S3 WB03 (16MiB flash/8MiB PSRAM), four-servo lamp, BF3901 camera and VB701N mic/speaker module. The position range requested by the team is500..2500µs. Joint1 is lift, joint2 middle/elbow and joint3 head tilt; continuous base is separate.
+
+Lamp Studio contains two diagrams: top is command/model estimate, bottom is manually observed shape used for calibration. Saved full-range settings must not be shrunk to a few observed sample points. The cardboard reference profile is editable. Head face direction can be flipped separately from pulse calibration. The model has no collision/force/position sensing.
+
+Latest choreography uses quintic easing and joint lags, a head-first slump/recovery, gentle bottle invitation and upward stretch/relaxation. One-click full previews play sound on the laptop; the same sampled plan can stream to the robot via existing glide commands. Agent-run software tests passed; loaded-arm behavior still depends on the user's physical calibration and observations.
+
+The prebuilt lamp firmware has SHA256 abd5d0da2ae53e6094afdac37f51e7f194327bf7d8cabb4b3c1167a5703e6d0f. It was application-only flashed and digest verified on the original board; all outputs off/audio READY/eight sounds were confirmed. Firmware startup skips normal pose/voice-agent paths. Network setup is explicit and does not contain a cloud motor-action mapping.
+
+Prior LJYD authentication did not obtain a successful session; the reason remains unconfirmed. Enter team identity locally in the setup UI; never share secrets in issues/commits. Future actions should be explicit local routines invoked by a verified cloud event contract.
+
+Pose work is delegated to a teammate. The included static-image benchmark built separately on ESP-IDF5.4.1 with ESP-DL3.3.14; live camera conversion, temporal posture interpretation, concurrency and actual speed remain integration work. An attached MPU6050 would measure its own module's motion, not a person's pose or servo shaft position.
+
+Public export excludes private credentials/history/captures and complete tools. Some historical guides describe earlier preparation stages; this state and README are the current overview.

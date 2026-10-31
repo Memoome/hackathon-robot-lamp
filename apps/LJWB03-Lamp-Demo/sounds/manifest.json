@@ -1,0 +1,62 @@
+{
+  "source": "Original local mathematical synthesis; no movie/audio samples",
+  "format": "16000Hz mono signed16 little endian",
+  "assets": [
+    {
+      "name": "robot_slump",
+      "bytes": 67200,
+      "seconds": 2.1,
+      "sha256": "fbe1166a7bde4a81ba2f1eef5df36e6d0e90539253edefa4afe132f110013ba3",
+      "peak": 0.82
+    },
+    {
+      "name": "robot_recover",
+      "bytes": 51200,
+      "seconds": 1.6,
+      "sha256": "bc7b0666caca4ca11f381cde7821a0e1967ad98795e6858de27d228372fb4047",
+      "peak": 0.82
+    },
+    {
+      "name": "music_slump",
+      "bytes": 67200,
+      "seconds": 2.1,
+      "sha256": "88252ef70152887d7bc946f2eedfc91d2b5127e071e688e54fb0f9119583d6dc",
+      "peak": 0.82
+    },
+    {
+      "name": "music_recover",
+      "bytes": 51200,
+      "seconds": 1.6,
+      "sha256": "0e0b25ec4cf9c6188aef75880db23a04ffce506bb5ee0a46ef7cf281df1840d7",
+      "peak": 0.82
+    },
+    {
+      "name": "robot_water",
+      "seconds": 2.3,
+      "bytes": 73600,
+      "sha256": "fbc3c5971216ab545915f23943e1cf10012db22d69741b001e04fc4ca2db4883",
+      "peak": 0.82
+    },
+    {
+      "name": "music_water",
+      "seconds": 2.3,
+      "bytes": 73600,
+      "sha256": "642d76f24d0c06860475988ce8b1cb4a8635ef0feb92d2d96e76448ad4a20832",
+      "peak": 0.82
+    },
+    {
+      "name": "robot_stretch",
+      "seconds": 2.3,
+      "bytes": 73600,
+      "sha256": "c2ca739caf90d91c5181e1d65a66983b0ae53874a46410b0cc7d03c931e11a91",
+      "peak": 0.82
+    },
+    {
+      "name": "music_stretch",
+      "seconds": 2.3,
+      "bytes": 73600,
+      "sha256": "ee7e878caef30328018375759e9dbaf39957014fe3a2ca312393299dfb7f7d80",
+      "peak": 0.82
+    }
+  ]
+}

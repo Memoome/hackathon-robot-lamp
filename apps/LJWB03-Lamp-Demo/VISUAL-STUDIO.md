@@ -1,0 +1,127 @@
+## Expressive routines (latest)
+
+Studio opens at **Three actions**. Press **Play Slump preview**, **Play Water preview** or **Play Stretch preview** once to watch the complete animation with laptop audio, phase captions and playback progress. Use **Run previewed plan** afterward for the same sampled curves on the robot, or the action's Run button. Connect and engage first if you want the preview to start at the real commanded pose. The observed model stays as your observation rather than copying the animation.
+
+- **Slump:** face droops first, links follow into a lower pose, a tiny effort to recover gives way to a soft settle, then the face notices you and leads the recovery. A small thank-you nod finishes at Rest.
+- **Water:** glance toward the fixed bottle spot, lean, make one small pointing nod with the invitation cue, hold without insisting, look back toward the user, then relax to Rest. This is not bottle detection.
+- **Stretch:** gather a breath with a small dip, raise the face, slowly open/lift the links, enjoy the crest, then relax in stages and finish with a contented nod.
+
+The engine uses quintic ease-in/ease-out curves and overlapping joint delays. A high-level gesture is several soft phases, rather than one endpoint jump followed by a reverse. Sounds can overlap movement. The same curve sampler supplies both screen frames and bounded glide targets to the existing firmware, preserving its smooth on-board stepping, watchdogs and Stop. Speeds respect the routine cap; with the current60µs/s setting, the designed previews are roughly18–22seconds. A higher cap can shorten them without changing their poses, subject to their intentional breathing/holds. Actual serial/audio buffering and motor load can add delay.
+
+Your selected Rest remains home. For action targets named Starter, the engine derives small local gestures using the calibrated head position, face direction and link geometry, searching within150µs of home for body links and limiting generated head changes to210µs. It does not silently jump to a distant inverse-kinematics solution. If you select a real checkpoint with a name other than Starter, that checkpoint takes priority as the action's main target. No physical collision or load model is included; check the complete preview and clearance before running. Base yaw is deliberately absent because there is no repeatable heading feedback.
+
+The calibration/profile/checkpoints are unchanged. `expressive-plan-reference.json` records the plans generated from the currently saved geometry for agent review; Studio regenerates from the active profile. Software checks verify model slump lowering/stretch rising, exact return, no-overshoot/rate caps, fullbounds, both styles, one-click complete screen playback without USB commands, and hardware sampler sequencing. No actual robot motion or physical sound timing was tested in this update. Reopen Studio to load it.
+
+## Automatic USB connection
+
+**Auto reconnect USB** is enabled when Studio opens. The app finds the board by its known USB identity even if its COM number changes. After cable removal it cancels live dragging/unfinished plans, clears stale board position, and retries when that board reappears. Failures back off up to10seconds between attempts. No servo engagement, resumed routine, automatic firmware upload or live-control enable occurs on reconnect. Check external power/common ground and engage the supported lamp again before movement.
+
+Use **Disconnect…** to release the supported lamp, close the port and pause automatic connection while loading a profile or working offline. Re-enable Auto reconnect USB or click Connect board afterward. A second controller can still hold the port; close/release it first. A visible port with unresponsive/incompatible firmware is reported as a timeout rather than falsely marked connected.
+
+## Lamp anatomy in both views
+
+The stick figure now includes a pedestal base, lower arm, upper arm and a shaded lamp head with a bright light-emitting face. A beam and FRONT arrow show the assumed direction it faces. J1 Lift is the mount pivot (GPIO12), J2 Elbow is the middle pivot (GPIO10), and J3 Head tilt is the final hinge (GPIO11). The final segment represents head orientation. Joint rings indicate axes of rotation; the colored downstream endpoints remain the drag handles for their preceding joints, as before. Base rotation is still GPIO15 with unknown heading.
+
+**Flip lamp face**, beside the visible arc buttons, reverses the head's displayed front in both models without changing pulse calibration, saved checkpoints or servo commands. Save profile afterward to include this preference in Lamp Cardboard Prototype. If you change the face direction after previewing, preview again before running that plan.
+
+The anatomy is a visual interpretation to verify against the real lamp, not automatic knowledge of its geometry. No movement routines were guessed or rewritten for this drawing update. Use the lamp-shaped preview to check whether Rest, Slump, Bottle and Stretch actually point the head as intended. Reopen Studio to see the details.
+
+## Saved prototype and preview-before-running
+
+The current saved preferences are preserved as **Lamp Cardboard Prototype** in `profiles/Lamp Cardboard Prototype.json`. Calibration points, direction fixes, full-range settings, lengths, checkpoints, roles and custom routine are included. Use **Save profile** to update this named snapshot after further changes; type another name before saving to keep separate versions. **Load profile** restores the selection while offline. Loading never connects, engages or enables live control. Current loaded settings remain editable, including ranges and calibration. Saving the named profile also captures current UI settings and preview/observed figure preferences. Older snapshot overwrites retain a `.previous.json` copy.
+
+For Slump, Water or Stretch, choose **Preview** in Three actions. For a custom sequence choose **Preview routine on screen** in Routine. The top figure animates the same per-joint pulse-rate logic as firmware: joints travel at a common speed and shorter moves stop earlier, respecting the selected cap. The laptop plays each sound on arrival, followed by the saved pause. Screen preview automatically disables live dragging and sends no robot commands. Base turns are shown as timed commands with unknown heading, not invented angles.
+
+After watching the whole preview, choose **Run previewed plan** in the top bar. This uses the frozen checkpoint pulses, speed cap, timing and sounds from that preview, even if you subsequently change the routine controls. It refuses to run if calibration changed or the board's starting pulse pose differs. Connect and engage the real lamp first, then preview from that current commanded pose for the closest comparison. With offline previews you may need to preview again after connection/engagement. Direct Run buttons still work too.
+
+STOP cancels screen animation and laptop sound, as well as the robot's pending routine when connected. Editing the control arm cancels a screen preview. The observed figure is never animated by a routine. Sound timing uses asset lengths; physical speaker buffering and motor load may add delay. Preview models commanded geometry; it does not detect collisions, stalls or sagging.
+
+Checks passed for full pulse bounds, range orientation and profile persistence, preview/common-rate math, screen-only playback, cancellation, snapshot consistency and existing live/base/three-action behavior. No hardware motions were performed during this update. Reopen Lamp Studio after supporting/releasing an active controller to load these changes.
+
+**Full pulse range enabled:** All three position joints now use500–2500µs through sliders and visual dragging. Startup and saving prevent calibration samples from narrowing this interval. Corrections align the full-range geometry. Reopen Studio to load it. No firmware change or physical movement was performed.
+
+## Range controls are now above the control arm
+
+Reopen Lamp Studio and look for **Movement arc · always available here**, directly above the top drawing. No tab search is necessary.
+
+- Choose Lift, Middle or Head in the visible dropdown.
+- **Use full180°** immediately restores that selected joint's visual mapping over its configured pulse bounds, preserving its current estimated angle and corrected direction. No robot movement is sent.
+- **Rotate arc…** enters picture-only editing. Drag the white RANGE handle, or use the5° buttons. **Save arc** applies the new sector, **Cancel** discards it.
+- The visible summary shows the selected joint's current mapped span and pulse bounds.
+
+Inspection of the user's saved calibration showed lift847–1176µs (~33°), middle600–2365µs (~125°), and head1057–1500µs (~21°). Inverse dragging clamps to those observations. This explains the differing visual movement ranges; it is not evidence that the real lift/head have narrower physical travel. No horn repositioning is required to fix this software mapping issue. If real motion still binds at a mechanical stop, narrow the physical command limits rather than forcing it. The earlier Hello trial does not establish clearance of every pose on the new assembly.
+
+## Adjustable joint range (latest)
+
+The earlier visual mapping could stop at the calibration samples: for example the lift samples847–1176µs prevented dragging past1176 even though configured pulse bounds were500–2500. The Joint range tab fixes this without changing hardware firmware.
+
+1. Reopen Lamp Studio. Click a colored control-arm endpoint to select that joint, or select Lift/Middle/Head in **Joint range**. The arc around its rotation pivot shows the current estimated range, with pulse values at its ends.
+2. Enable **Edit180° range**. Live control is switched off and movement commands are locked while editing.
+3. Drag the white **RANGE** handle around the pivot to orient the180° sector. You can also use the rotation slider or5° buttons.
+4. Press **Save full180° range for selected joint**. The app maps its configured pulse bounds (normally500–2500µs) over this sector while retaining that joint's corrected direction. No motor command is sent.
+5. Test slowly, check clearance, and align the observed arm if necessary. Observed-arm matches now shift a saved full-range sector without shrinking its pulse interval. Existing checkpoint pulse values are retained.
+
+This is an adjustable visual estimate of the servo's travel, not a change to its physical limits. A linkage can collide or bind before the electrical endpoints.180° is a starting model, not a guarantee for this assembly. Editing the range does not change the configured pulse limits or command extra travel beyond them. The bottom figure remains your manually observed pose.
+
+## Two-arm live control (latest update)
+
+Reopen Lamp Studio. Joint1 lift drawing direction is now reversed once, like the earlier head/base corrections. Recorded pulse checkpoints remain intact.
+
+**Top: CONTROL ARM.** This is the program's estimated pose. Connect, check external power/common ground, support the lamp and Engage once. Tick **Enable live dragging** once per connection. Drag the top arm or pulse sliders to send motion immediately. Faster dragging requests higher speed; slower dragging requests lower speed. The separate Live speed limit defaults600µs/s, bounded10..600. Physical speed is limited by firmware, mechanism and load; instant following is not guaranteed. Release, leave the control area, lose window focus, STOP, a stale drag stream or loss of the app heartbeat stops motion. After stopping, the top arm adopts the last commanded position. There is no deferred catch-up movement after release. Startup is never automatically armed.
+
+**Bottom: OBSERVED ARM.** Wait for the lamp to hold still. Drag the bottom joint endpoint to match what you see, then release. This saves a calibration observation automatically at the board's current commanded pulse for that joint. It sends no hardware movement. When offline, it pairs with the preview pulses instead; these are hypothetical until verified on hardware. First observation aligns the offset, second observation at another pulse teaches direction and travel, further observations refine the fit. Calibrate lift first, then middle, then head. The bottom figure is your observation, not a sensor feed; it stays as you left it until you adjust it again.
+
+All three action buttons, base controls and custom checkpoint routines remain in Studio. They use the updated mapping for visual editing. Existing stored pulse routines keep their recorded values. The previous button-based preview controls below remain useful when live dragging is disabled. The base still has no heading feedback.
+
+# Lamp Studio
+
+Open **Desktop → Hackathon-ESP32S3 → Lamp Studio**. Close the earlier Lamp Demo controller after supporting the lamp and releasing its outputs before connecting this one. The board already has the required lamp firmware. Launching this program does not connect, move or play sound automatically.
+
+## Start with the drawing
+
+The three colored links are lift GPIO12, middle GPIO10 and head GPIO11. Drag a colored endpoint or adjust its pulse slider. These edits change the preview only. The dashed figure is the last board-command estimate; it is not measured feedback. The initial angles and link lengths are placeholders. The base does not rotate in this editor.
+
+For a real movement: Connect board, check external servo power/common ground, support the lamp, and choose **Engage at preview pose**. Initial engagement can jump because the board cannot measure the current shaft positions. Subsequent **Move gradually to preview pose** commands use the existing smooth ramp, with a default speed cap of60µs/second. STOP cancels the remaining sequence and holds current targets while connected. Release and closing can let the lamp fall.
+
+## Easy calibration
+
+Reopen Lamp Studio to load the updated controls. In Calibrate drawing:
+
+1. Choose Lift, Middle or Head. If it goes the opposite way in the picture, press **Reverse direction for this joint**. This sends no robot movement and keeps the current picture angle anchored.
+2. Position the real lamp using Pose control and let it stop. Press **Match picture to current lamp position**. When connected, this uses the board's current commanded pulses rather than an unsent preview.
+3. Drag that joint's colored endpoint until the picture matches what you see. Or use **Bend picture left/right** for small changes. The robot is locked against movement while matching.
+4. Press **Picture matches — save this position**.
+5. Move that same real joint a little, let it stop, then repeat matching. The first match aligns the picture; the second teaches direction and travel. Repeat for Lift, Middle and Head in that order.
+
+The base stays stationary. No angle numbers or endpoint pulses are required for this flow. Matching changes only the selected joint; its child links naturally follow. Calibration records and saved checkpoints remain in visual-lamp.json. Drawing angles are estimates of commanded positions, with no sensor feedback. Outside two observed positions the drawing clamps rather than inventing travel. You can add more matching positions to improve the mapping. If repeated positions imply conflicting directions, the app asks you to correct the observation.
+
+The advanced numbers and link length fields are available under **Show / hide advanced numbers & link lengths**. Use them only if needed. Enter pivot-to-pivot link lengths in any consistent unit. STOP and Release remain available throughout.
+
+## Checkpoints and routines
+
+Save preview poses with names such as Rest, Bottle and Stretch. Load them into preview before sending them. Use **Use last commanded pose in preview** to copy the latest board pulse values, then save that as a checkpoint if useful.
+
+Select a named checkpoint, choose movement seconds in Pose control, choose pause/sound in Routine, and press **Append selected checkpoint**. Add more rows, reorder with arrows, or remove and re-add a row to change its settings. Each row stores a snapshot of its pulse values; changing the named checkpoint later does not change rows already appended.
+
+**Preview routine on screen** animates the planned moves without board commands. Sounds are labels only during screen previews; pauses exclude sound duration. The real run moves to each checkpoint, plays the selected sound on arrival, then pauses. Distance and speed cap can make a move take longer than the requested time. **Run routine on robot** requires an engaged lamp and explicit confirmation. STOP cancels later checkpoints and sounds.
+
+Suggested routines after YOU calibrate the poses:
+
+- Water: Rest → Bottle (water cue,1.2second pause) → Rest.
+- Stretch: Rest → Stretch (stretch cue,2second pause) → Rest (happy cue).
+
+Everything is saved in `visual-lamp.json` beside the app: calibration, lengths, checkpoint pulses and routine. This is also the file the agent can read to understand your calibrated robot. Existing Lamp Demo poses are kept separately. Physical tests and calibration are still required.
+
+## Rotating base (GPIO15)
+
+Reopen Lamp Studio and choose **Rotating base**. Check power/common ground in Pose control, connect, then hold Left or Right. Default speed is5% command strength. Releasing the button, leaving it, losing window focus or STOP ends the turn. Each press is limited to10seconds. The firmware also stops rotation if renewal commands stop. Keep cables untwisted. No base angle is measured or inferred from command duration; the side view does not rotate.
+
+Use **Swap left / right directions** if the controls are reversed. Stop pulse defaults1500µs; adjust slightly within1400..1600 if the continuous servo creeps. Set a0.1..10second duration and **Add left/right turn to routine** to insert a timed base checkpoint. During that row the other joints hold their previous commands. Position and base turns are sequential in this version. Screen preview labels the timed turn; it cannot show a reliable heading without position feedback. Existing calibration/checkpoints are preserved.
+
+## Direction correction and all three actions
+
+Reopen Lamp Studio to load the corrected base left/right direction and head joint3 (GPIO11) visual mapping. The direction correction is saved once; reopening does not keep toggling it. Saved raw checkpoint pulses and custom routine rows retain their recorded values. Newly loaded starter checkpoints use reversed head movement; starters remain estimates to calibrate.
+
+The **Three actions** tab runs Slump, Water and Stretch with robot or musical sounds. Select the saved checkpoint for Rest, Slump, Water and Stretch, then Save action checkpoint choices. The current project has editable starter checkpoints preselected. Replace them with your observed positions as you calibrate. Preview is screen-only; Run plays through the attached robot speaker. All actions start at Rest, visit their action checkpoint and return to Rest. Slump/stretch hold2seconds after their cue, water holds1.2seconds. Slump/stretch finish with a happy cue on return. Sound plays on arrival, as for custom routines. Movement time and speed cap come from Pose control.
+
+Connect and engage the initial pose in Pose control before Run. No firmware change is needed. All action controls and custom checkpoint routines now live in Lamp Studio.

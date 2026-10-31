@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "pins": [
+    12,
+    10,
+    11
+  ],
+  "upright": null,
+  "slump": null,
+  "water": null,
+  "stretch": null,
+  "low": [
+    2000,
+    500,
+    500
+  ],
+  "high": [
+    2499,
+    2500,
+    2500
+  ],
+  "start": [
+    2000,
+    600,
+    1500
+  ],
+  "duration": 6.0,
+  "max_speed": 60,
+  "volume": 90,
+  "style": "Robot chirps"
+}

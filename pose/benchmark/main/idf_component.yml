@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.4,<5.5"
+  espressif/coco_pose:
+    version: "0.4.1"
+    override_path: "../../esp-dl/models/coco_pose"
