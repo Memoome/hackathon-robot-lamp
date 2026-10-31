@@ -1,0 +1,47 @@
+--- a/esp_cam_sensor/sensors/bf3901/bf3901.c
++++ b/esp_cam_sensor/sensors/bf3901/bf3901.c
+@@ -505,21 +505,29 @@
+ 
+ static esp_err_t bf3901_get_sensor_id(esp_cam_sensor_device_t *dev, esp_cam_sensor_id_t *id)
+ {
+-    esp_err_t ret = ESP_FAIL;
+-    uint8_t pid_h, pid_l;
+-    delay_ms(5);
+-
+-    ret = bf3901_read(dev->sccb_handle, BF3901_REG_CHIP_ID_H, &pid_h);
+-    if (ret != ESP_OK) {
+-        return ret;
+-    }
+-    ret = bf3901_read(dev->sccb_handle, BF3901_REG_CHIP_ID_L, &pid_l);
+-    if (ret != ESP_OK) {
+-        return ret;
+-    }
+-    id->pid = (pid_h << 8) | pid_l;
+-
+-    return ret;
++    /* WB03 wake-up can produce a stale first ID byte. Require three complete,
++     * consecutive matching reads; never accept an alternate sensor ID. */
++    unsigned stable = 0;
++    for (unsigned attempt = 0; attempt < 8; ++attempt) {
++        uint8_t hi = 0, lo = 0;
++        delay_ms(20);
++        esp_err_t ret = bf3901_read(dev->sccb_handle, BF3901_REG_CHIP_ID_H, &hi);
++        if (ret == ESP_OK) {
++            ret = bf3901_read(dev->sccb_handle, BF3901_REG_CHIP_ID_L, &lo);
++        }
++        id->pid = (hi << 8) | lo;
++        if (ret == ESP_OK && id->pid == BF3901_PID) {
++            if (++stable == 3) {
++                ESP_LOGI(TAG, "ID_STABLE pid=0x%04x consecutive=3 attempts=%u", id->pid, attempt + 1);
++                return ESP_OK;
++            }
++        } else {
++            stable = 0;
++            ESP_LOGW(TAG, "ID_UNSTABLE attempt=%u pid=0x%04x rc=%d", attempt + 1, id->pid, ret);
++        }
++    }
++    ESP_LOGE(TAG, "ID_UNSTABLE exhausted=8 last_pid=0x%04x", id->pid);
++    return ESP_FAIL;
+ }
+ 
+ static esp_err_t bf3901_set_stream(esp_cam_sensor_device_t *dev, int enable)

@@ -9,3 +9,7 @@ Latest application: firmware/prebuilt/lamp-action-lights.bin, SHA256 f9c16d6b5f4
 LJYD live authentication/conversation/action mapping and concurrent vision remain separate integration tasks. The public overlay contains no configured product secret. Pair each PC and enter Wi-Fi/product credentials locally. Do not publish local settings, full-flash/NVS images or private captures.
 
 Read README.md for current behavior and firmware/README.md for update/SDK requirements. Studio guide newest sections supersede historical sections. This export preserves the existing teammate contribution history.
+
+## Separate vision pipeline
+
+The merged `pose/live` source runs pedestrian detection and presence states on the board, automatically sends JPEG frames when a stable person is present, and runs YOLO26 pose/posture processing on the PC. A local web client displays matching frames and results. The current firmware source no longer runs the older on-board YOLO11n-Pose model; its checked-in prebuilt image remains a historical reference. Follow [VISION-POSE-ARCHITECTURE.md](VISION-POSE-ARCHITECTURE.md) for recorded measurements, current protocol and remaining acceptance work. Scenario-level posture accuracy and concurrent lamp/voice integration are not established by merging these sources. No hardware is flashed by this merge.
