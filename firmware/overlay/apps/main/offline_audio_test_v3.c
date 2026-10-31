@@ -1,6 +1,7 @@
 #include "offline_audio_test.h"
 #include "network_setup.h"
 #include "actuator_test.h"
+#include "lamp_led.h"
 #include "camera_test.h"
 #include "qm.h"
 #if defined(CONFIG_OFFLINE_AUDIO_TEST) && CONFIG_OFFLINE_AUDIO_TEST
@@ -246,6 +247,7 @@ void offline_audio_test_start(void)
     if(actuator_test_init()!=ESP_OK){QM_LOGE(TAG,"ERROR actuator init; outputs remain off");return;}
     if(camera_test_init()!=ESP_OK){QM_LOGE(TAG,"ERROR camera CLI init");return;}
     if(xTaskCreate(worker,"offline_audio",8192,NULL,8,&task)!=pdPASS){QM_LOGE(TAG,"ERROR worker allocation");return;}
+    if(lamp_led_cli_init()!=QM_EOK){QM_LOGE(TAG,"ERROR LED CLI init");}
     network_setup_init();
     QM_LOGI(TAG,"INIT PSRAM=%lu fixture_bytes=%lu fixture_fnv32=%08lx volume=%u UART0=115200",(unsigned long)PCM_CAPACITY,(unsigned long)fixture,(unsigned long)fnv32(offline_music_pcm_start,fixture),s_volume);
 }

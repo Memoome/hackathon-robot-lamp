@@ -39,6 +39,14 @@ def phases(start,end):
     return [list(end[:2])+[round(start[2]+.45*(end[2]-start[2]))],list(end)]
 
 class LampLink(DemoLink):
+    def led(self,data):
+        if data is None:command='lamp_led off'
+        else:
+            if len(data)!=3 or any(type(x)!=int or not 0<=x<=255 for x in data):raise ValueError('LED values must be integers in0..255.')
+            command='lamp_led set '+' '.join(map(str,data))
+        raw=self.exchange(command,rb'LED_(?:STATUS|ERROR)[^\r\n]*')
+        result=re.search(rb'LED_(?:STATUS|ERROR)[^\r\n]*',raw)[0].decode(errors='replace')
+        self.emit('finished',result)
     def check(self):
         if self.cancel.is_set():raise Cancelled('Stopped. Movement paused and sound cancelled.')
         if time.monotonic()-self.ui_alive>.8:raise Cancelled('Window stopped responding; movement cancelled.')
@@ -204,6 +212,7 @@ class LampLink(DemoLink):
                     elif kind=='stretch':self.stretch(data)
                     elif kind=='sound':
                         index,volume=data;self.start_sound(index,volume);self.finish_sound(index);self.emit('finished','Sound finished. Listen to confirm quality.')
+                    elif kind=='led':self.led(data)
             except Cancelled as exc:
                 try:self.stop_hardware(False)
                 except Exception:pass
@@ -216,7 +225,7 @@ class LampLink(DemoLink):
                 self.s=None;self.session=None;self.state=None;self.emit('error',str(exc))
                 if kind=='close':self.emit('closed',None);return
     def submit(self,kind,data=None):
-        if kind in ('prepare','engage','jog','slump','recover','water','stretch','sound'):self.cancel.clear()
+        if kind in ('prepare','engage','jog','slump','recover','water','stretch','sound','led'):self.cancel.clear()
         super().submit(kind,data)
 
 class LampDemo:

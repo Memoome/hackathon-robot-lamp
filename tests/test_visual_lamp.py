@@ -84,11 +84,8 @@ class BaseFake(Fake):
         if len(self.calls)==2:self.base_held=False
     def wait_until(self,deadline):pass
 f=BaseFake();base=dict(type='base',name='turn',direction=1,speed=5,neutral=1500,seconds=10,hold=True)
-f.turn_base(base)
-assert f.calls==['arm_live base 2 50 1500']*2+['arm_live base 0 0 1500']
-f=BaseFake();f.cancel.set()
-try:f.turn_base(base);raise AssertionError('Base cancellation ignored')
-except v.Cancelled:assert f.calls[-1]=='arm_live base 0 0 1500'
+try:f.turn_base(base);raise AssertionError('Continuous base still allowed')
+except ValueError:assert not f.calls
 project=v.fresh();project['routine']=[dict(base,hold=False,seconds=1)];v.check_project(project)
 legacy=v.fresh();legacy.pop('direction_fix_20261030');legacy['calibration'][2]=[[500,-90],[2500,90]]
 v.upgrade_directions(legacy);first=copy.deepcopy(legacy);v.upgrade_directions(legacy)

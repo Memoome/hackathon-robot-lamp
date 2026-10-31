@@ -1,4 +1,4 @@
-"""Small, model-aware lamp gestures. Geometry is an estimate, never feedback."""
+"""Expressive, model-aware lamp gestures. Geometry is an estimate, never feedback."""
 import math
 
 def lerp(a,b,t):return [round(x+(y-x)*t) for x,y in zip(a,b)]
@@ -104,7 +104,7 @@ def build_slow_gesture(p,roles,kind,music=False):
     return rows
 
 
-def build_gesture(p,roles,kind,music=False,intensity=1.):
+def build_compact_gesture(p,roles,kind,music=False,intensity=1.):
     home=p['poses'][roles['Rest']].copy();_,heading=geometry(p,home)
     forward=1 if math.cos(math.radians(heading))>=0 else -1
     down=forward;size=sum(p['lengths'][:2]);rows=[]
@@ -143,5 +143,79 @@ def build_gesture(p,roles,kind,music=False,intensity=1.):
         add('Settle softly after the stretch',home,.65)
         add('That felt good · contented nod',turn(home,down*4),.25)
         add('Comfortable again',home,.3)
+    else:raise ValueError('Unknown action')
+    return rows
+
+def clear_pose(p,pose,side):
+    xy,_=geometry(p,pose)
+    return all(y<=-8 for x,y in xy[1:]) and xy[-1][0]*side>=20
+
+def clear_path(p,start,row,side):
+    duration=trajectory_duration(start,row,600)
+    return all(clear_pose(p,sample_motion(start,row,duration*n/40,600)[0],side) for n in range(41))
+
+def broad_pose(p,home,x,y,heading):
+    """Search the full configured pulse sector, retaining a clear home path.
+
+    Targets stay 5% inside the electrical edges. This is a stick-model check,
+    not a model of servo housings, cables, torque or physical collisions.
+    """
+    lo=p['config']['low'];hi=p['config']['high'];candidates=[]
+    side=1 if geometry(p,home)[0][-1][0]>=0 else -1
+    for a in range(lo[0]+100,hi[0]-99,50):
+        for b in range(lo[1]+100,hi[1]-99,50):
+            pose=face(p,[a,b,home[2]],heading,home,2000)
+            pose[2]=max(lo[2]+100,min(hi[2]-100,pose[2]))
+            if not clear_pose(p,pose,side):continue
+            xy,angle=geometry(p,pose);error=(angle-heading+180)%360-180
+            score=(xy[-1][0]-x)**2+(xy[-1][1]-y)**2+2*error**2
+            candidates.append((score,pose))
+    for _,pose in sorted(candidates):
+        row=dict(pulse=pose,seconds=1,delays=[0,.04,.08])
+        if clear_path(p,home,row,side):return pose
+    return home.copy()
+
+def build_gesture(p,roles,kind,music=False,intensity=1.):
+    home=p['poses'][roles['Rest']].copy();xy,heading=geometry(p,home)
+    side=1 if xy[-1][0]>=0 else -1;size=sum(p['lengths']);rows=[]
+    custom=not roles[kind].startswith('Starter ')
+    def target(x,y,angle):return broad_pose(p,home,side*size*x,-size*y,angle)
+    def turn(pose,delta):return face(p,pose,geometry(p,pose)[1]+delta,home,2000)
+    def add(name,pose,seconds,pause=0,sound=-1,delays=(0,.04,.08)):
+        row=dict(name=name,pulse=lerp(home,pose,intensity),seconds=seconds,pause=pause,sound=sound,easing='quintic',delays=list(delays),gesture_speed=600)
+        start=rows[-1]['pulse'] if rows else home
+        # Joint lags can bow the path. Remove lags first; if necessary insert
+        # the known home as a bridge instead of silently passing through floor.
+        if not custom and clear_pose(p,home,side) and not clear_path(p,start,row,side):
+            row['delays']=[0,0,0]
+            if not clear_path(p,start,row,side):
+                bridge=dict(name='Open through rest',pulse=home.copy(),seconds=1,pause=0,sound=-1,easing='quintic',delays=[0,0,0],gesture_speed=600)
+                if clear_path(p,start,bridge,side) and clear_path(p,home,row,side):rows.append(bridge)
+                else:row['pulse']=start.copy()
+        rows.append(row)
+    add('Your calibrated rest',home,.2)
+    if kind=='Slump':
+        curled=p['poses'][roles[kind]].copy() if custom else target(.3,.15,side*78)
+        droop=target(.6,.35,side*85)
+        add('Oh no… · head hangs heavily',droop,.55,sound=2 if music else 0,delays=(.08,.04,0))
+        add('Collapse · fold into a deep sad curl',curled,.85,.18,delays=(.04,0,.06))
+        add('Notice you · gather courage',lerp(curled,home,.32),.4,0,delays=(.04,.02,0))
+        add('Relief · open back up',home,.8,sound=3 if music else 1,delays=(.05,.02,0))
+    elif kind=='Water':
+        recoil=target(.3,.7,-side*80)
+        reach=p['poses'][roles[kind]].copy() if custom else target(.94,.13,side*18)
+        point=target(.83,.16,side*80)
+        add('Hey! · pull back and look at you',recoil,.65,.08)
+        add('Look · a big invitation toward the bottle',reach,.9,.1,5 if music else 4,delays=(.06,.02,0))
+        add('There! · an emphatic pointing bow',point,.5,.25)
+        add('Relax to rest',home,.75)
+    elif kind=='Stretch':
+        coil=target(.32,.2,side*70)
+        tall=p['poses'][roles[kind]].copy() if custom else target(.08,.98,-side*90)
+        open_face=target(.12,.8,-side*15)
+        add('Gather a breath · curl all the way in',coil,.65,.12)
+        add('Aaaah · unfold into a full tall stretch',tall,1.1,.3,7 if music else 6,delays=(.03,0,.05))
+        add('Enjoy it · open the face wide',open_face,.6,.15)
+        add('Soft landing · relaxed and happy',home,.85)
     else:raise ValueError('Unknown action')
     return rows

@@ -1,7 +1,7 @@
 """Calibrated side-view pose editor. Drawing is an estimate; no automatic hardware actions."""
 import copy,json,math,pathlib,queue,time,tkinter as tk
 import winsound
-from tkinter import ttk,messagebox,simpledialog
+from tkinter import ttk,messagebox,simpledialog,colorchooser
 from lamp_demo import LampLink,DEFAULT,validate,Cancelled,board_port
 from live_control import base_command
 from expressive_routines import build_gesture,sample_motion,trajectory_duration
@@ -12,10 +12,33 @@ SOUND_FILES=['robot_slump','robot_recover','music_slump','music_recover','robot_
 SOUND_SECONDS=[2.1,1.6,2.1,1.6,2.3,2.3,2.3,2.3]
 COLORS=('#36b8bd','#f6b85a','#a89aed')
 SOUNDS=['None','Robot slump','Robot happy','Music slump','Music happy','Robot water','Music water','Robot stretch','Music stretch']
+SERVO_WIRING=('Current lamp motors (31 October 2026)\n\n'
+    'Joint 1 / lift: MG996R position servo → GPIO12\n'
+    'Joint 2 / elbow: MG90S position servo → GPIO10\n'
+    'Joint 3 / head: SG90 position servo → GPIO11\n'
+    'Base: SG90 position servo → GPIO15\n\n'
+    'All use the existing 50Hz control signal. Base position controls set an estimated angle.\n'
+    'Red wires → regulated external 5V. Brown/black → supply GND; join supply GND to board GND. '
+    'Keep external +5V separate from the USB-powered board +5V.\n\n'
+    'The available 500–2500µs controls are not certified mechanical endpoints for a new servo. '
+    'For the new lift, begin unloaded/supported around 1500µs, explore 1000–2000µs first, '
+    'then expand gradually only while movement remains free. Stop if it binds or buzzes.\n\n'
+    'Replacing a servo or refitting its horn changes the pulse-to-lamp alignment. '
+    'Match the observed drawing again and check poses before running the old routines. '
+    'The full-180° drawing is an estimate, not a measured specification.\n\n'
+    'The base now uses SG90 position control. Timed continuous-base steps are blocked. '
+    'Use Rotating base to preview and save position checkpoints.')
 
 def finite(x,lo,hi):
     if isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) or not lo<=x<=hi:raise ValueError(f'Use a number within {lo}..{hi}.')
     return x
+
+def led_rgb(colour,brightness):
+    if not isinstance(colour,str) or len(colour)!=7 or colour[0]!='#':raise ValueError('Choose a colour in #RRGGBB format.')
+    try:rgb=[int(colour[n:n+2],16) for n in (1,3,5)]
+    except ValueError:raise ValueError('Choose a colour in #RRGGBB format.')
+    finite(brightness,0,100)
+    return [round(x*brightness/100) for x in rgb]
 
 def mapping(points):
     points=sorted(points)
@@ -63,8 +86,10 @@ def preview_motion(start,goal,seconds,cap,elapsed):
 
 def fresh():
     p=dict(version=1,config=copy.deepcopy(DEFAULT),lengths=[150,150,65],
-                calibration=[[[500,-90],[2500,90]],[[500,-90],[2500,90]],[[500,90],[2500,-90]]],
-                calibrated=[False]*3,poses={},routine=[],base_reverse=True,direction_fix_20261030=True)
+                calibration=[[[500,-90],[2500,90]],[[500,90],[2500,-90]],[[500,90],[2500,-90]]],
+                calibrated=[False]*3,poses={},routine=[],base_reverse=True,direction_fix_20261030=True,
+                head_mount_direction_fix_20261031=True,elbow_mount_direction_fix_20261031=True,
+                head_up_direction_fix_20261031=True)
     return p
 
 def upgrade_directions(p):
@@ -76,6 +101,24 @@ def upgrade_directions(p):
         p['calibration'][0]=reverse_mapping(p['calibration'][0],p['config']['start'][0])
         p['calibrated'][0]=False;p.setdefault('matches',{}).pop('0',None)
         p['lift_direction_fix_20261030']=True
+    if not p.get('head_mount_direction_fix_20261031'):
+        # The actual lamp's head linkage reverses the shaft direction. Keep
+        # the current picture fixed while reversing both forward/inverse maps.
+        anchor=p.get('preview_pulse',p['config']['start'])[2]
+        p['calibration'][2]=reverse_mapping(p['calibration'][2],anchor)
+        p.setdefault('matches',{}).pop('2',None)
+        p['head_mount_direction_fix_20261031']=True
+    if not p.get('elbow_mount_direction_fix_20261031'):
+        anchor=p.get('preview_pulse',p['config']['start'])[1]
+        p['calibration'][1]=reverse_mapping(p['calibration'][1],anchor)
+        p.setdefault('matches',{}).pop('1',None)
+        p['elbow_mount_direction_fix_20261031']=True
+    if not p.get('head_up_direction_fix_20261031'):
+        # User verified elbow, then observed that head up/down is reversed.
+        anchor=p.get('preview_pulse',p['config']['start'])[2]
+        p['calibration'][2]=reverse_mapping(p['calibration'][2],anchor)
+        p.setdefault('matches',{}).pop('2',None)
+        p['head_up_direction_fix_20261031']=True
     return p
 
 def check_project(p):
@@ -88,6 +131,7 @@ def check_project(p):
         mapping(points)
     for pose in p['poses'].values():check_pose(pose,p['config'])
     for row in p['routine']:
+        if row.get('type')=='base_position':position_base_row(row);continue
         if row.get('type')=='base':
             base_command(row['direction'],row['speed'],row['neutral']);finite(row['seconds'],.1,10)
             continue
@@ -101,23 +145,44 @@ def check_project(p):
 def check_pose(pulse,cfg):
     if len(pulse)!=3 or any(type(v)!=int or not lo<=v<=hi for v,lo,hi in zip(pulse,cfg['low'],cfg['high'])):raise ValueError('Pose outside saved pulse limits.')
 
+def position_base_row(row):
+    if row.get('type')!='base_position':raise ValueError('Old timed continuous-base turns cannot run with the SG90. Remove them and add position checkpoints.')
+    finite(row['pulse'],500,2500);finite(row['seconds'],.2,30)
+    if type(row['pulse'])!=int:raise ValueError('Base pulse must be an integer.')
+    return row
+
+def base_angle(pulse,reverse=False):
+    angle=(pulse-500)*180/2000
+    return 180-angle if reverse else angle
+
+def base_motion_duration(start,row):
+    distance=abs(row['pulse']-start)
+    speed=max(10,min(600,round(distance/row['seconds'])))
+    return distance/speed if distance else 0
+
 class VisualLink(LampLink):
     def perform(self,kind,payload):
+        if isinstance(payload,dict) and payload.get('base_live'):
+            self.live_base();self.emit('finished','Base drag stopped at current commanded position.');return
+        if isinstance(payload,dict) and 'base_position' in payload:
+            self.position_base(payload['base_position'],payload.get('engage',False));self.emit('finished','Base at commanded pulse; physical angle is estimated.');return
         if isinstance(payload,dict) and payload.get('live'):
             self.live_drag(payload['cfg']);return
         rows,cfg,count=payload
         validate(cfg)
         for row in rows:
+            if row.get('type')=='base_position':position_base_row(row);continue
             if row.get('type')=='base':
-                base_command(row['direction'],row['speed'],row['neutral']);finite(row['seconds'],.1,10)
-                continue
+                raise ValueError('Replace old continuous-base rows with SG90 position checkpoints.')
             check_pose(row['pulse'],cfg);finite(row['seconds'],.1 if row.get('easing')=='quintic' else 1,30);finite(row['pause'],0,30)
             if row['sound']>=count:raise ValueError('Board firmware does not include the selected sound.')
         self.exchange('arm_live status')
-        if any(row.get('type')!='base' for row in rows) and (self.state['active'][:3]!=[1,1,1] or self.state['base_spin']):raise ValueError('Set the initial pose first and keep the base stopped.')
+        if any(row.get('type')=='base_position' for row in rows) and not self.state['active'][3]:raise ValueError('Engage the SG90 base first before running base checkpoints.')
+        if any(row.get('type') not in ('base','base_position') for row in rows) and (self.state['active'][:3]!=[1,1,1] or self.state['base_spin']):raise ValueError('Set the initial pose first and keep the base stopped.')
         pending=None
         for n,row in enumerate(rows,1):
             self.check();self.emit('phase',f"Checkpoint {n}/{len(rows)} · {row['name']}")
+            if row.get('type')=='base_position':self.position_base(row);continue
             if row.get('type')=='base':
                 self.turn_base(row);continue
             if row.get('easing')=='quintic':
@@ -154,15 +219,37 @@ class VisualLink(LampLink):
             self.exchange('arm_live freeze')
         self.emit('finished','Live drag stopped; current commanded pose held.')
     def turn_base(self,row):
-        deadline=time.monotonic()+row['seconds']
+        raise ValueError('Timed continuous-base commands are disabled for the SG90.')
+    def position_base(self,row,engage=False):
+        position_base_row(row);self.check();self.exchange('arm_live status')
+        target=row['pulse']
+        if engage:
+            self.exchange(f'arm_live engage 15 {target} 1')
+        else:
+            if not self.state['active'][3] or self.state['base_spin']:raise ValueError('Engage the SG90 base first in Rotating base.')
+            start=self.state['pulse'][3];speed=max(10,min(600,round(abs(target-start)/row['seconds'])))
+            deadline=time.monotonic()+abs(target-start)/speed+3
+            try:
+                while self.state['pulse'][3]!=target:
+                    self.check()
+                    self.exchange(f'arm_live jog 15 {int(target>start)} {speed} {min(start,target)} {max(start,target)} 1')
+                    if time.monotonic()>deadline:raise RuntimeError('Base move timed out.')
+                    self.wait_until(time.monotonic()+.05)
+            finally:self.exchange('arm_live freeze')
+    def live_base(self):
+        self.check();self.exchange('arm_live status')
+        if not self.state['active'][3] or self.state['base_spin']:raise ValueError('Engage the SG90 base first.')
         try:
-            while time.monotonic()<deadline:
-                self.check()
-                if row.get('hold') and not self.base_held:break
-                self.exchange(base_command(row['direction'],row['speed'],row['neutral']))
-                self.wait_until(time.monotonic()+.08)
-        finally:
-            self.exchange(base_command(0,0,row['neutral']))
+            while self.base_live_held:
+                self.check();target,speed,updated=self.base_live_target
+                if time.monotonic()-updated>.3:break
+                finite(target,500,2500);finite(speed,10,600)
+                current=self.state['pulse'][3]
+                if current!=target:
+                    self.exchange(f'arm_live jog 15 {int(target>current)} {speed} {min(current,target)} {max(current,target)} 1')
+                else:self.exchange('arm_live freeze')
+                self.wait_until(time.monotonic()+.05)
+        finally:self.exchange('arm_live freeze')
 
 class App:
     def __init__(self,root):
@@ -194,7 +281,13 @@ class App:
         self.profile_box=ttk.Combobox(profilebar,textvariable=self.profile_name,width=28);self.profile_box.pack(side='left')
         ttk.Button(profilebar,text='Save profile',command=lambda:self.attempt(self.save_profile)).pack(side='left',padx=5)
         ttk.Button(profilebar,text='Load profile',command=lambda:self.attempt(self.load_profile)).pack(side='left',padx=5)
+        ttk.Button(profilebar,text='Servo wiring',command=lambda:messagebox.showinfo('Lamp motors & wiring',SERVO_WIRING,parent=root)).pack(side='left',padx=5)
         ttk.Button(profilebar,text='▶ Run previewed plan',command=lambda:self.attempt(self.run_previewed)).pack(side='right')
+        # Reserve the stop bar before the expanding canvases, including on smaller screens.
+        bottom=ttk.Frame(root,padding=8);bottom.pack(side='bottom',fill='x')
+        ttk.Button(bottom,text='STOP motion + sound + preview',command=self.stop).pack(side='left')
+        ttk.Button(bottom,text='Release outputs…',command=self.release).pack(side='left',padx=8)
+        ttk.Label(bottom,textvariable=self.status,wraplength=650).pack(side='left',padx=10)
         body=ttk.Panedwindow(root,orient='horizontal');body.pack(fill='both',expand=True,padx=12)
         left=ttk.Frame(body);right=ttk.Frame(body);body.add(left,weight=1);body.add(right,weight=1)
         ttk.Label(left,text='CONTROL ARM · drag to command',font=('Segoe UI',11,'bold')).pack(anchor='w')
@@ -213,7 +306,7 @@ class App:
         self.canvas=tk.Canvas(left,bg='#12232e',highlightthickness=0,width=490,height=230);self.canvas.pack(fill='both',expand=True)
         self.canvas.bind('<Configure>',lambda e:self.draw());self.canvas.bind('<Button-1>',self.press);self.canvas.bind('<B1-Motion>',self.drag);self.canvas.bind('<ButtonRelease-1>',lambda e:self.end_control())
         self.canvas.bind('<Leave>',lambda e:self.end_control())
-        self.live_enabled=tk.BooleanVar();ttk.Checkbutton(left,text='Enable live dragging (once per connection)',variable=self.live_enabled,command=self.toggle_live).pack(anchor='w',pady=3)
+        self.live_enabled=tk.BooleanVar();ttk.Label(left,text='Live dragging is automatic once the three arm joints are engaged.').pack(anchor='w',pady=3)
         self.live_max=tk.StringVar(value='600');self.field(left,'Live speed limit (µs/s, 10–600)',self.live_max)
         ttk.Label(left,text='OBSERVED ARM · adjust to match the real lamp',font=('Segoe UI',11,'bold')).pack(anchor='w')
         self.real_canvas=tk.Canvas(left,bg='#25343b',highlightthickness=0,width=490,height=230);self.real_canvas.pack(fill='both',expand=True)
@@ -221,8 +314,8 @@ class App:
         self.real_canvas.bind('<B1-Motion>',self.real_drag);self.real_canvas.bind('<ButtonRelease-1>',lambda e:self.attempt(self.real_release))
         ttk.Label(left,text='Top: estimated command. Bottom: your observation, saved as calibration.\nNo position sensors. Live speed follows your drag, capped at600µs/s.',wraplength=490).pack(pady=4)
         self.pulses=[]
-        for i,name in enumerate(('Lift · GPIO12','Middle · GPIO10','Head · GPIO11')):
-            row=ttk.Frame(left);row.pack(fill='x',pady=3);ttk.Label(row,text=name,width=18).pack(side='left')
+        for i,name in enumerate(('Lift MG996R · GPIO12','Elbow MG90S · GPIO10','Head SG90 · GPIO11')):
+            row=ttk.Frame(left);row.pack(fill='x',pady=3);ttk.Label(row,text=name,width=22).pack(side='left')
             v=tk.DoubleVar(value=self.p.get('preview_pulse',self.p['config']['start'])[i]);self.pulses.append(v)
             slider=ttk.Scale(row,from_=self.p['config']['low'][i],to=self.p['config']['high'][i],variable=v,command=lambda _,j=i:self.slider_changed());slider.pack(side='left',fill='x',expand=True)
             slider.bind('<ButtonPress-1>',lambda e:self.start_control(),add='+');slider.bind('<ButtonRelease-1>',lambda e:self.end_control(),add='+')
@@ -232,28 +325,73 @@ class App:
         pose=ttk.Frame(tabs,padding=10);cal=ttk.Frame(tabs,padding=10);routine=ttk.Frame(tabs,padding=10);base=ttk.Frame(tabs,padding=10)
         tabs.add(pose,text='Pose control');tabs.add(cal,text='Calibrate drawing');tabs.add(routine,text='Routine')
         tabs.add(base,text='Rotating base')
-        ttk.Label(base,text='Rotating base · GPIO15',font=('Segoe UI',16,'bold')).pack(anchor='w',pady=8)
-        ttk.Label(base,text='Continuous servo: these buttons control speed, not angle.\nHold an arrow to turn; release it to stop. Watch cable twist.\nUse the power checkbox in Pose control before moving.',wraplength=470).pack(anchor='w',pady=8)
-        self.base_speed=tk.StringVar(value='5');self.base_neutral=tk.StringVar(value='1500');self.base_seconds=tk.StringVar(value='1')
-        self.field(base,'Turn speed % (1–100)',self.base_speed)
-        self.field(base,'Stop pulse µs (1400–1600)',self.base_neutral)
-        self.base_reverse=tk.BooleanVar(value=self.p.get('base_reverse',True));ttk.Checkbutton(base,text='Swap left / right directions',variable=self.base_reverse,command=self.save_base_direction).pack(anchor='w',pady=6)
-        row=ttk.Frame(base);row.pack(fill='x',pady=12)
-        for label,d in [('← Hold left',-1),('Hold right →',1)]:
-            button=ttk.Button(row,text=label);button.pack(side='left',expand=True,fill='x')
-            button.bind('<ButtonPress-1>',lambda e,d=d:self.attempt(lambda:self.base_hold(d)))
-            button.bind('<ButtonRelease-1>',lambda e:self.base_release());button.bind('<Leave>',lambda e:self.base_release())
+        led=ttk.Frame(tabs,padding=10);tabs.add(led,text='LED ring')
+        ttk.Label(led,text='LED ring · 8 lights · GPIO1',font=('Segoe UI',16,'bold')).pack(anchor='w',pady=8)
+        ttk.Label(led,text='Choose a colour and brightness, then press Apply.\nThis controls the whole ring. Servo settings are unchanged.',wraplength=450).pack(anchor='w',pady=5)
+        self.led_colour=tk.StringVar(value='#FFD59A');self.led_brightness=tk.DoubleVar(value=10);self.led_power=tk.BooleanVar(value=True)
+        self.led_sample=tk.Label(led,text='Colour preview',bg=self.led_colour.get(),fg='#111111',height=3);self.led_sample.pack(fill='x',pady=8)
+        presets=ttk.Frame(led);presets.pack(fill='x')
+        for name,colour in [('Warm','#FFD59A'),('White','#FFFFFF'),('Red','#FF0000'),('Green','#00FF00'),('Blue','#0000FF')]:
+            ttk.Button(presets,text=name,command=lambda c=colour:self.set_led_colour(c)).pack(side='left',expand=True,fill='x')
+        ttk.Button(led,text='Choose another colour…',command=self.choose_led_colour).pack(fill='x',pady=6)
+        self.led_level=tk.StringVar(value='Brightness: 10%')
+        ttk.Label(led,textvariable=self.led_level).pack(anchor='w')
+        ttk.Scale(led,from_=0,to=100,variable=self.led_brightness,command=lambda _:self.led_level.set(f'Brightness: {round(self.led_brightness.get())}%')).pack(fill='x',pady=8)
+        ttk.Label(led,text='External 5V and common ground already confirmed.').pack(anchor='w',pady=8)
+        ttk.Button(led,text='Apply colour',command=lambda:self.attempt(self.apply_led)).pack(fill='x',pady=5)
+        ttk.Button(led,text='LEDs OFF',command=lambda:self.attempt(lambda:self.apply_led(off=True))).pack(fill='x',pady=5)
+        ttk.Label(led,text='DI → GPIO1 data path; DO unconnected. Use the recommended\nlevel shifter and 330Ω series resistor at DI.\nApply and OFF change lights only; they do not move servos.\nLights retain their last colour if USB disconnects; use OFF before unplugging.',wraplength=450).pack(anchor='w',pady=12)
+        test=ttk.Frame(tabs,padding=10);tabs.insert(0,test,text='Servo test')
+        tabs.insert(1,led)
+        ttk.Label(test,text='Orient one servo at a time',font=('Segoe UI',16,'bold')).pack(anchor='w')
+        ttk.Label(test,text='1. Support / unload the lamp.\n2. Apply 1500µs to ONE joint, then fit its horn.\n3. Use small steps to check its free travel.\nFull software bounds: 500–2500µs; physical stops may be narrower.',wraplength=450).pack(anchor='w',pady=6)
+        self.test_pulses=[];self.test_states=[];self.test_step=tk.StringVar(value='10')
+        self.field(test,'Step size (µs, 1–2000)',self.test_step)
+        for i,name in enumerate(('Lift MG996R · GPIO12','Elbow MG90S · GPIO10','Head SG90 · GPIO11')):
+            card=ttk.LabelFrame(test,text=name,padding=5);card.pack(fill='x',pady=4)
+            value=tk.StringVar(value='1500');self.test_pulses.append(value)
+            row=ttk.Frame(card);row.pack(fill='x')
+            ttk.Entry(row,textvariable=value,width=8).pack(side='left')
+            ttk.Label(row,text='µs').pack(side='left',padx=3)
+            ttk.Button(row,text='Apply pulse…',command=lambda j=i:self.attempt(lambda:self.test_apply(j))).pack(side='left',padx=3)
+            for label,d in [('− Step',-1),('+ Step',1)]:
+                ttk.Button(row,text=label,command=lambda j=i,d=d:self.attempt(lambda:self.test_nudge(j,d))).pack(side='left',padx=2)
+            state=tk.StringVar(value='Released · physical position unknown');self.test_states.append(state)
+            ttk.Label(card,textvariable=state).pack(anchor='w')
+        ttk.Label(test,text='Steps start at the last board command, not the edited input.\nOnly the selected joint changes; other outputs keep their state.\nBegin the new lift within 1000–2000µs. Stop on binding/buzzing.\nBase SG90 position: use the Rotating base tab.',wraplength=450).pack(anchor='w',pady=6)
+        ttk.Label(base,text='Base SG90 · position · GPIO15',font=('Segoe UI',16,'bold')).pack(anchor='w',pady=5)
+        ttk.Label(base,text='Drag the pointer or slider to move the engaged base live.\nRelease the mouse to stop. Before engagement, dragging is preview only.\nAngles assume 180° travel; verify the actual servo and clearance.',wraplength=460).pack(anchor='w')
+        settings=self.p.get('base_position',{})
+        self.base_target=tk.DoubleVar(value=settings.get('preview',1500))
+        self.base_control_held=False;self.base_stream=False;self.base_drag_previous=None;self.link.base_live_held=False
+        self.base_speed=tk.StringVar(value='5');self.base_neutral=tk.StringVar(value='1500');self.base_seconds=tk.StringVar(value='2')
+        self.base_reverse=tk.BooleanVar(value=settings.get('reverse',False))
+        self.base_front=float(settings.get('front',90))
+        self.base_canvas=tk.Canvas(base,bg='#12232e',height=210,highlightthickness=0);self.base_canvas.pack(fill='x',pady=4)
+        self.base_canvas.bind('<Configure>',lambda e:self.draw_base())
+        self.base_canvas.bind('<Button-1>',self.base_point);self.base_canvas.bind('<B1-Motion>',self.base_point)
+        base_slider=ttk.Scale(base,from_=500,to=2500,variable=self.base_target,command=lambda _:self.draw_base());base_slider.pack(fill='x')
+        base_slider.bind('<ButtonPress-1>',lambda e:self.start_base_drag(),add='+')
+        for widget in (base_slider,self.base_canvas):
+            widget.bind('<ButtonRelease-1>',lambda e:self.base_release(),add='+')
+            widget.bind('<Leave>',lambda e:self.base_release(),add='+')
         root.bind_all('<ButtonRelease-1>',lambda e:self.base_release(),add='+')
         root.bind('<FocusOut>',lambda e:root.after(20,lambda:self.base_release() if root.focus_displayof() is None else None),add='+')
-        ttk.Button(base,text='Stop base',command=self.base_release).pack(fill='x',pady=5)
-        self.base_status=tk.StringVar(value='Base idle · heading unknown')
-        ttk.Label(base,textvariable=self.base_status,wraplength=470).pack(anchor='w',pady=12)
-        ttk.Separator(base).pack(fill='x',pady=10)
-        self.field(base,'Timed turn duration (0.1–10 seconds)',self.base_seconds)
-        row=ttk.Frame(base);row.pack(fill='x',pady=8)
-        ttk.Button(row,text='Add left turn to routine',command=lambda:self.attempt(lambda:self.add_base(-1))).pack(side='left',expand=True,fill='x')
-        ttk.Button(row,text='Add right turn to routine',command=lambda:self.attempt(lambda:self.add_base(1))).pack(side='left',expand=True,fill='x')
-        ttk.Label(base,text='Turns are separate timed checkpoints. The three bending joints\nhold their last commands while the base turns.\nNo encoder: heading and cable twist are not measured.\nIf it creeps at stop, adjust Stop pulse a few µs and test again.\nHolding is limited to ten seconds per press.',wraplength=470).pack(anchor='w',pady=10)
+        self.base_preview_text=tk.StringVar();ttk.Label(base,textvariable=self.base_preview_text).pack(anchor='w')
+        self.field(base,'Preview pulse (500–2500µs)',self.base_target)
+        self.base_target.trace_add('write',lambda *_:self.base_target_changed())
+        ttk.Checkbutton(base,text='Reverse drawing direction',variable=self.base_reverse,command=self.save_base_position).pack(anchor='w')
+        self.field(base,'Move time (0.2–30s; speed capped at 600µs/s)',self.base_seconds)
+        row=ttk.Frame(base);row.pack(fill='x',pady=4)
+        ttk.Button(row,text='Engage at preview…',command=lambda:self.attempt(lambda:self.move_base(True))).pack(side='left',expand=True,fill='x')
+        ttk.Button(row,text='Move to preview',command=lambda:self.attempt(self.move_base)).pack(side='left',expand=True,fill='x')
+        row=ttk.Frame(base);row.pack(fill='x',pady=4)
+        ttk.Button(row,text='Mark preview as FRONT',command=self.mark_base_front).pack(side='left',expand=True,fill='x')
+        ttk.Button(row,text='Add base pose to routine',command=lambda:self.attempt(self.add_base_pose)).pack(side='left',expand=True,fill='x')
+        self.base_status=tk.StringVar(value='Base released · physical position unknown')
+        ttk.Label(base,textvariable=self.base_status,wraplength=460).pack(anchor='w',pady=4)
+        ttk.Label(base,text='External power and common ground are already confirmed.\nFirst engagement can jump. Base poses run sequentially with arm checkpoints.\nOld continuous-base timed turns are blocked; replace them with base poses.',wraplength=460).pack(anchor='w')
+        self.draw_base()
         cal_host=cal
         cal_scroll=tk.Canvas(cal_host,highlightthickness=0)
         cal_bar=ttk.Scrollbar(cal_host,orient='vertical',command=cal_scroll.yview)
@@ -262,7 +400,8 @@ class App:
         cal=ttk.Frame(cal_scroll);cal_window=cal_scroll.create_window(0,0,window=cal,anchor='nw')
         cal.bind('<Configure>',lambda e:cal_scroll.configure(scrollregion=cal_scroll.bbox('all')))
         cal_scroll.bind('<Configure>',lambda e:cal_scroll.itemconfigure(cal_window,width=e.width))
-        self.power=tk.BooleanVar();ttk.Checkbutton(pose,text='External servo power / common ground checked; lamp supported',variable=self.power).pack(anchor='w')
+        self.power=tk.BooleanVar(value=True);ttk.Label(pose,text='External power and common ground already confirmed.').pack(anchor='w')
+        ttk.Label(test,text='External power and common ground already confirmed.').pack(anchor='w',pady=4)
         self.seconds=tk.StringVar(value='6');self.speed=tk.StringVar(value='60')
         self.field(pose,'Move time (seconds)',self.seconds);self.field(pose,'Speed cap (µs/second, 10–600)',self.speed)
         ttk.Button(pose,text='Engage at preview pose…',command=self.engage).pack(fill='x',pady=6)
@@ -333,7 +472,7 @@ class App:
         ttk.Label(actions,textvariable=self.playback_text,wraplength=470).pack(anchor='w',pady=(10,4))
         self.playback_progress=tk.DoubleVar(value=0);ttk.Progressbar(actions,variable=self.playback_progress,maximum=100).pack(fill='x',pady=4)
         ttk.Button(profilebar,text='▶ Actions',command=lambda:tabs.select(actions)).pack(side='left',padx=5)
-        tabs.select(actions)
+        tabs.select(base)
         ttk.Label(routine,text='Select a checkpoint in Pose control, then add it here.\nEach row stores its own pulse values. Sound plays on arrival.',wraplength=490).pack(anchor='w')
         self.pause=tk.StringVar(value='1');self.sound=tk.StringVar(value='None');self.field(routine,'Pause after sound (seconds)',self.pause)
         ttk.Combobox(routine,textvariable=self.sound,values=SOUNDS,state='readonly').pack(fill='x',pady=6)
@@ -343,22 +482,28 @@ class App:
         for label,fn in [('↑',lambda:self.reorder(-1)),('↓',lambda:self.reorder(1)),('Remove',self.remove_row)]:ttk.Button(row,text=label,command=fn).pack(side='left',expand=True,fill='x')
         ttk.Button(routine,text='Preview routine on screen',command=self.preview).pack(fill='x',pady=6)
         ttk.Button(routine,text='Run routine on robot',command=self.run).pack(fill='x',pady=6)
-        bottom=ttk.Frame(root,padding=12);bottom.pack(fill='x')
-        ttk.Button(bottom,text='STOP motion + sound + preview',command=self.stop).pack(side='left')
-        ttk.Button(bottom,text='Release outputs…',command=self.release).pack(side='left',padx=8)
-        ttk.Label(bottom,textvariable=self.status,wraplength=700).pack(side='left',padx=10)
         self.apply_ui_preferences();self.refresh_profiles()
         root.protocol('WM_DELETE_WINDOW',self.close);self.refresh_lists();self.cal_list();self.draw();root.after(50,self.poll)
         root.bind_all('<ButtonRelease-1>',lambda e:self.end_control(),add='+')
         root.bind('<FocusOut>',lambda e:root.after(20,lambda:self.end_control() if root.focus_displayof() is None else None),add='+')
     def field(self,parent,label,var):
         row=ttk.Frame(parent);row.pack(fill='x',pady=4);ttk.Label(row,text=label).pack(side='left');ttk.Entry(row,textvariable=var,width=9).pack(side='right')
+    def set_led_colour(self,colour):
+        led_rgb(colour,100);self.led_colour.set(colour);self.led_sample.configure(bg=colour)
+    def choose_led_colour(self):
+        colour=colorchooser.askcolor(color=self.led_colour.get(),parent=self.root)[1]
+        if colour:self.set_led_colour(colour)
+    def apply_led(self,off=False):
+        if self.busy:raise ValueError('Wait for the current action to finish or press STOP first.')
+        if not off and not self.led_power.get():raise ValueError('Check the LED ring external 5V and common ground first.')
+        self.send('led',None if off else led_rgb(self.led_colour.get(),round(self.led_brightness.get())))
     def attempt(self,fn):
         try:return fn()
         except Exception as e:messagebox.showerror('Lamp Studio',str(e),parent=self.root)
     def save(self):
         if self.previewing:self.cancel_preview()
         if hasattr(self,'action_style'):self.p['studio_ui']=self.capture_ui()
+        self.p['base_position']=self.base_settings()
         ensure_full_pulse_range(self.p);check_project(self.p);tmp=FILE.with_suffix('.tmp');tmp.write_text(json.dumps(self.p,indent=2),encoding='utf-8');tmp.replace(FILE)
     def refresh_profiles(self):
         names=[]
@@ -378,8 +523,12 @@ class App:
         return PROFILES/(name+'.json')
     def save_profile(self):
         name=self.profile_name.get().strip();path=self.profile_path(name)
+        if name.casefold()=='final draft' or (path.exists() and json.loads(path.read_text(encoding='utf-8')).get('profile_locked')):
+            raise ValueError('This profile is locked. Enter a different name to save an editable copy; final draft will stay unchanged.')
         self.p['preview_pulse']=self.pulse();self.p['observed_angles']=copy.deepcopy(self.real_angles)
+        self.p['base_position']=self.base_settings()
         self.p['config']=self.config();self.p['studio_ui']=self.capture_ui();self.p['base_reverse']=self.base_reverse.get();self.p['profile_name']=name
+        self.p.pop('profile_locked',None);self.p.pop('locked_at',None)
         self.save();PROFILES.mkdir(exist_ok=True)
         if path.exists():path.with_suffix('.previous.json').write_text(path.read_text(encoding='utf-8'),encoding='utf-8')
         tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(self.p,indent=2),encoding='utf-8');tmp.replace(path)
@@ -387,12 +536,20 @@ class App:
     def load_profile(self):
         if self.connected or self.busy:raise ValueError('Use Disconnect first (support the lamp), then load the profile.')
         candidate=check_project(json.loads(self.profile_path(self.profile_name.get().strip()).read_text(encoding='utf-8')))
-        self.cancel_preview();self.cancel_match();self.cancel_range();self.p=upgrade_directions(candidate);ensure_full_pulse_range(self.p)
-        self.base_reverse.set(self.p.get('base_reverse',True));self.real_angles=self.p.get('observed_angles')
+        locked=candidate.get('profile_locked',False)
+        self.cancel_preview();self.cancel_match();self.cancel_range();self.p=candidate if locked else upgrade_directions(candidate)
+        if locked:
+            # Never migrate or write the archived calibration. Editing takes
+            # place in an explicitly named working copy, not the locked file.
+            self.p=copy.deepcopy(candidate);self.p.pop('profile_locked',None);self.p.pop('locked_at',None)
+            self.p['profile_name']=candidate['profile_name']+' (working copy)'
+            self.profile_name.set(self.p['profile_name'])
+        else:ensure_full_pulse_range(self.p)
+        base_settings=self.p.get('base_position',{});self.base_reverse.set(base_settings.get('reverse',False));self.base_front=base_settings.get('front',90);self.base_target.set(base_settings.get('preview',1500));self.draw_base();self.real_angles=self.p.get('observed_angles')
         for var,value in zip(self.pulses,self.p.get('preview_pulse',self.p['config']['start'])):var.set(value)
         for var,value in zip(self.lengths,self.p['lengths']):var.set(str(value))
         for key,var in self.roles.items():var.set(self.p.get('roles',{}).get(key,''))
-        self.apply_ui_preferences();self.save();self.refresh_lists();self.cal_list();self.draw();self.status.set('Profile loaded; live control remains off.')
+        self.apply_ui_preferences();self.save();self.refresh_lists();self.cal_list();self.draw();self.status.set('Locked profile loaded into an editable working copy; original stays unchanged. Live control is off.' if locked else 'Profile loaded; live control remains off.')
     def pulse(self):
         v=[round(finite(x.get(),lo,hi)) for x,lo,hi in zip(self.pulses,self.p['config']['low'],self.p['config']['high'])];check_pose(v,self.p['config']);return v
     def config(self):
@@ -468,9 +625,10 @@ class App:
         if self.range_edit.get():self.live_enabled.set(False);self.status.set('Save the range before enabling live control.');return
         if not self.live_enabled.get():self.end_control();return
         if not self.connected or not self.power.get() or not self.state or self.state['active'][:3]!=[1,1,1] or self.busy:
-            self.live_enabled.set(False);self.status.set('Connect, check power and engage the supported lamp once before enabling live control.');return
+            self.live_enabled.set(False);self.status.set('Connect and engage the arm joints; live dragging then works automatically.');return
         self.status.set('Live dragging enabled. Drag top arm or pulse sliders; release to stop. Speed capped at600µs/s.')
     def start_control(self):
+        self.live_enabled.set(bool(self.connected and self.state and self.state['active'][:3]==[1,1,1] and not self.range_edit.get() and self.match_angles is None and not self.previewing and (not self.busy or self.live_stream)))
         self.control_held=True;self.last_live=(self.pulse(),time.monotonic());self.preview_token+=1
     def end_control(self):
         self.control_held=False;self.dragging=None;self.link.live_held=False;self.range_dragging=False
@@ -562,9 +720,89 @@ class App:
         if kind!='connect' and not self.connected:raise ValueError('Connect board first.')
         self.preview_token+=1;self.busy=True;self.link.submit(kind,data)
     def ready(self):
-        if not self.connected or not self.power.get():raise ValueError('Connect board and check external power/common ground first.')
+        if not self.connected or not self.power.get():raise ValueError('Connect the board first.')
         if self.busy:raise ValueError('Wait for completion or press STOP.')
+    def test_apply(self,index):
+        self.ready()
+        pulse=int(self.test_pulses[index].get());finite(pulse,500,2500)
+        if not messagebox.askokcancel('Apply one servo pulse',f'Apply {pulse}µs to joint {index+1} only? Initial engagement or a large change can jump. Support/unload the lamp and check free travel.',parent=self.root):return
+        self.end_control();self.live_enabled.set(False)
+        self.send('engage',(index,pulse,self.config()))
+    def test_nudge(self,index,direction):
+        self.ready()
+        step=int(self.test_step.get());finite(step,1,2000)
+        if not self.state or not self.state['active'][index]:raise ValueError('Apply a starting pulse to this servo first.')
+        old=self.state['pulse'][index];pulse=max(500,min(2500,old+direction*step))
+        if pulse==old:self.status.set('Software limit reached; no command sent.');return
+        if step>50 and not messagebox.askokcancel('Large test step',f'Move joint {index+1} from {old} to {pulse}µs? This is a direct test step; use 10µs for endpoint checks.',parent=self.root):return
+        self.end_control();self.live_enabled.set(False)
+        self.test_pulses[index].set(str(pulse));self.send('engage',(index,pulse,self.config()))
+    def base_settings(self):
+        return dict(preview=round(self.base_target.get()),reverse=self.base_reverse.get(),front=self.base_front)
+    def save_base_position(self):
+        self.draw_base();self.save()
+    def mark_base_front(self):
+        self.base_front=base_angle(self.base_target.get(),self.base_reverse.get());self.save_base_position()
+    def draw_base(self):
+        if not hasattr(self,'base_canvas'):return
+        try:pulse=finite(float(self.base_target.get()),500,2500)
+        except (ValueError,tk.TclError):return
+        c=self.base_canvas;c.delete('all');x=max(220,c.winfo_width())/2;y=115;r=75
+        def point(angle,radius=r):
+            theta=math.radians(angle-self.base_front-90)
+            return x+radius*math.cos(theta),y+radius*math.sin(theta)
+        angle=base_angle(pulse,self.base_reverse.get())
+        for a in range(0,180,3):c.create_line(*point(a),*point(a+3),fill='#506979',width=2)
+        c.create_oval(x-28,y-28,x+28,y+28,fill='#354f5d',outline='#8aa4ae')
+        if self.state and self.state['active'][3] and 500<=self.state['pulse'][3]<=2500:
+            c.create_line(x,y,*point(base_angle(self.state['pulse'][3],self.base_reverse.get())),fill='#f6b85a',width=3,dash=(5,3))
+        c.create_line(x,y,*point(angle),fill='#36b8bd',width=6,arrow='last')
+        c.create_text(x,12,text='FRONT ↑ · TOP VIEW',fill='white')
+        for a in (0,90,180):c.create_text(*point(a,r+16),text=str(a)+'°',fill='#c8d5de')
+        c.create_text(x,200,text='Teal: preview · Gold: last command · no measured feedback',fill='#c8d5de',font=('Segoe UI',8))
+        if hasattr(self,'base_preview_text'):self.base_preview_text.set(f'Preview {angle:.1f}° · {round(pulse)}µs · 180° assumed travel')
+    def base_point(self,event):
+        if (self.busy and not self.base_control_held) or self.previewing:return
+        if not self.base_control_held:self.start_base_drag()
+        x=max(220,self.base_canvas.winfo_width())/2;y=115
+        angle=(math.degrees(math.atan2(event.y-y,event.x-x))+90+self.base_front)%360
+        if angle>180:angle=0 if angle>270 else 180
+        if self.base_reverse.get():angle=180-angle
+        self.base_target.set(round(500+angle*2000/180))
+    def start_base_drag(self):
+        if self.busy or self.previewing or self.range_edit.get() or self.match_angles is not None:return
+        self.base_control_held=True
+        self.base_drag_previous=(round(self.base_target.get()),time.monotonic())
+    def base_target_changed(self):
+        self.draw_base()
+        if not self.base_control_held or self.previewing:return
+        if self.range_edit.get() or self.match_angles is not None:return
+        if self.busy and not self.base_stream:return
+        if not self.connected or not self.state or not self.state['active'][3]:return
+        now=time.monotonic()
+        try:target=round(finite(float(self.base_target.get()),500,2500))
+        except (ValueError,tk.TclError):return
+        previous,when=self.base_drag_previous or (target,now-.05)
+        speed=max(10,min(600,round(abs(target-previous)/max(.015,now-when))))
+        self.base_drag_previous=(target,now)
+        self.link.base_live_target=(target,speed,now)
+        if not self.link.base_live_held:
+            self.base_stream=True
+            self.link.base_live_held=True
+            self.attempt(lambda:self.send('slump',dict(base_live=True)))
+    def base_pose_row(self):
+        pulse=int(round(self.base_target.get()));finite(pulse,500,2500)
+        return dict(type='base_position',name='Base position',pulse=pulse,seconds=finite(float(self.base_seconds.get()),.2,30))
+    def move_base(self,engage=False):
+        self.ready();row=self.base_pose_row()
+        if engage and not messagebox.askokcancel('Engage SG90 base',f"Apply {row['pulse']}µs to GPIO15? First engagement can jump. Support the lamp and check clearance.",parent=self.root):return
+        self.end_control();self.live_enabled.set(False)
+        self.send('slump',dict(base_position=row,engage=engage))
+    def add_base_pose(self):
+        self.p['routine'].append(self.base_pose_row());self.save();self.refresh_lists()
+        self.status.set('Base position checkpoint added. Preview in Routine; no movement sent.')
     def base_row(self,d,hold=False):
+        raise ValueError('Continuous-base controls are disabled. Use SG90 position checkpoints.')
         if self.base_reverse.get():d=-d
         speed=finite(float(self.base_speed.get()),1,100);neutral=int(self.base_neutral.get());base_command(d,speed,neutral)
         return dict(type='base',name='Base '+('reverse' if d<0 else 'forward'),direction=d,speed=speed,neutral=neutral,seconds=10 if hold else finite(float(self.base_seconds.get()),.1,10),hold=hold)
@@ -574,6 +812,7 @@ class App:
         self.link.base_held=True;self.send('slump',([row],self.config(),self.count))
     def base_release(self):
         self.link.base_held=False
+        self.link.base_live_held=False;self.base_control_held=False
     def save_base_direction(self):
         self.p['base_reverse']=self.base_reverse.get();self.save()
     def save_roles(self):
@@ -624,7 +863,7 @@ class App:
         self.rows.delete(0,'end')
         for i,r in enumerate(self.p['routine'],1):
             text=f"{i}. {r['name']} · {r['seconds']}s"
-            text+=f" · {r['speed']}%" if r.get('type')=='base' else f" + {r['pause']}s · {SOUNDS[r['sound']+1]}"
+            text+=(f" · {r['pulse']}µs" if r.get('type')=='base_position' else ' · OLD continuous turn — replace' if r.get('type')=='base' else f" + {r['pause']}s · {SOUNDS[r['sound']+1]}")
             self.rows.insert('end',text)
     def selected(self):
         if not self.poses.curselection():raise ValueError('Select a saved checkpoint first.')
@@ -784,15 +1023,20 @@ class App:
         self.cancel_preview();self.end_control();self.live_enabled.set(False)
         rows=copy.deepcopy(self.p['routine'] if rows is None else rows)
         if not rows:raise ValueError('Add routine checkpoints first.')
+        if any(row.get('type')=='base' for row in rows):raise ValueError('Replace old timed base turns with SG90 position checkpoints before previewing.')
         candidate=copy.deepcopy(self.p);candidate['routine']=rows;check_project(candidate)
         cfg=self.gesture_config(rows);start=self.state['pulse'][:3].copy() if self.connected and self.state and self.state['active'][:3]==[1,1,1] else self.pulse()
         check_pose(start,cfg)
         self.preview_plan=dict(rows=rows,cfg=cfg,start=start,calibration=copy.deepcopy(self.p['calibration']),lengths=self.p['lengths'].copy(),head_face_sign=self.p.get('head_face_sign',1))
+        base_start=self.state['pulse'][3] if self.connected and self.state and self.state['active'][3] else 1500
+        self.preview_plan['base_start']=base_start
+        self.preview_plan['base_geometry']=(self.base_reverse.get(),self.base_front)
+        self.base_target.set(base_start)
         if self.real_angles is None:self.real_reference=start.copy()
         self.previewing=True;self.preview_token+=1;token=self.preview_token
-        estimate=0.;audio_end=0.;previous=start
+        estimate=0.;audio_end=0.;previous=start;previous_base=base_start
         for row in rows:
-            if row.get('type')=='base':estimate+=row['seconds'];continue
+            if row.get('type')=='base_position':estimate+=base_motion_duration(previous_base,row);previous_base=row['pulse'];continue
             eased=row.get('easing')=='quintic'
             if eased and row['sound']>=0:estimate=max(estimate,audio_end);audio_end=estimate+SOUND_SECONDS[row['sound']]
             estimate+=trajectory_duration(previous,row,cfg['max_speed']) if eased else preview_motion(previous,row['pulse'],row['seconds'],cfg['max_speed'],0)[1]
@@ -818,6 +1062,15 @@ class App:
                 if remaining>0:self.root.after(max(1,round(remaining*1000)),lambda:next_row(index));return
                 self.previewing=False;self.playback_progress.set(100);self.playback_text.set('Preview complete · Run previewed plan uses the same gesture.');self.status.set('Preview complete. Run previewed plan uses this same motion, pauses and sounds.');return
             row=rows[index];initial=self.pulse();begin=time.monotonic();self.status.set('SCREEN ONLY · '+row['name'])
+            if row.get('type')=='base_position':
+                start_base=self.base_target.get();duration=base_motion_duration(start_base,row)
+                def base_tick():
+                    if token!=self.preview_token:return
+                    t=min(1,(time.monotonic()-begin)/duration) if duration else 1
+                    self.base_target.set(start_base+(row['pulse']-start_base)*t)
+                    if t<1:self.root.after(30,base_tick)
+                    else:next_row(index+1)
+                base_tick();return
             if row.get('type')=='base':
                 self.base_status.set('Preview: '+row['name']+f" for {row['seconds']}s · heading unknown")
                 self.root.after(round(row['seconds']*1000),lambda:next_row(index+1));return
@@ -847,9 +1100,12 @@ class App:
         self.ready()
         if self.previewing:raise ValueError('Wait for the preview to finish first.')
         plan=self.preview_plan
+        if plan and any(row.get('type')=='base_position' for row in plan['rows']):
+            if not self.state or not self.state['active'][3] or self.state['pulse'][3]!=plan['base_start']:raise ValueError('Base start changed or is released. Engage it, then preview again.')
+            if (self.base_reverse.get(),self.base_front)!=plan['base_geometry']:raise ValueError('Base drawing calibration changed. Preview again.')
         if not plan:raise ValueError('Preview a complete action or routine first.')
         if plan['calibration']!=self.p['calibration'] or plan['lengths']!=self.p['lengths'] or plan.get('head_face_sign',1)!=self.p.get('head_face_sign',1):raise ValueError('The lamp model changed. Preview again before running.')
-        if not self.state or self.state['active'][:3]!=[1,1,1] or self.state['pulse'][:3]!=plan['start']:raise ValueError('The robot starting pose differs from the preview. Preview again from its current position.')
+        if any(row.get('type')!='base_position' for row in plan['rows']) and (not self.state or self.state['active'][:3]!=[1,1,1] or self.state['pulse'][:3]!=plan['start']):raise ValueError('The robot starting pose differs from the preview. Preview again from its current position.')
         if messagebox.askokcancel('Run previewed plan','Run exactly the previewed checkpoints, speed limit, pauses and sounds? Physical clearance still needs checking.',parent=self.root):
             self.send('slump',(copy.deepcopy(plan['rows']),copy.deepcopy(plan['cfg']),self.count))
     def stop(self):
@@ -889,22 +1145,31 @@ class App:
         self.connection.set('Reconnecting USB…');self.send('connect')
     def poll(self):
         self.link.ui_alive=time.monotonic()
+        if self.base_control_held and self.link.base_live_held and hasattr(self.link,'base_live_target'):
+            target,speed,_=self.link.base_live_target;self.link.base_live_target=(target,speed,time.monotonic())
         try:
             while True:
                 kind,data=self.events.get_nowait()
                 if kind=='connected':
                     self.connected=True;self.busy=False;self.count=data[1];self.retry_count=0;self.connection.set(f'{data[0]} · {self.count} sounds ready')
+                    self.power.set(True)
                     self.live_enabled.set(False);self.status.set('USB connected. Movement will not resume automatically; engage the supported lamp when ready.')
                 elif kind=='state':
                     self.state=data;self.draw()
-                    self.base_status.set(('Turning · ' if data['base_spin'] else 'Stopped · ')+f"command {data['pulse'][3]}µs · heading unknown")
+                    for i,label in enumerate(self.test_states):
+                        label.set(f"Command: {data['pulse'][i]}µs · "+('engaged' if data['active'][i] else 'released; position unknown'))
+                    self.base_status.set(f"Base command: {data['pulse'][3]}µs · "+('engaged (estimated position)' if data['active'][3] else 'released; position unknown'));self.draw_base()
                 elif kind=='phase':self.status.set(data)
                 elif kind=='finished':
+                    if self.base_stream:
+                        self.base_release();self.base_stream=False
+                        if self.state and self.state['active'][3]:self.base_target.set(self.state['pulse'][3])
                     was_live=self.live_stream;self.busy=False;self.live_stream=False;self.status.set(data)
                     if was_live:self.end_control();self.use_current()
                 elif kind=='error':
                     self.connected=False;self.busy=False;self.live_stream=False;self.live_enabled.set(False);self.end_control();self.base_release();self.power.set(False);self.state=None;self.preview_plan=None
                     self.retry_count+=1;self.retry_at=time.monotonic()+min(10,1.5*2**min(self.retry_count-1,3));self.connection.set('Disconnected · retry scheduled' if self.auto_connect.get() else 'Disconnected');self.status.set(data)
+                    for label in self.test_states:label.set('Disconnected · physical position unknown')
                 elif kind=='closed':
                     if self.disconnecting:
                         self.disconnecting=False;self.connected=False;self.busy=False;self.state=None;self.power.set(False);self.connection.set('Offline · auto reconnect paused')

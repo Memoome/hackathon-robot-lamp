@@ -34,10 +34,11 @@ The supplied **Lamp Cardboard Prototype** profile is a reference for our assembl
 
 | Function | Signal |
 |---|---:|
-| Lift MG90S position servo | GPIO12 |
-| Middle SG90 position servo | GPIO10 |
+| Lift MG996R position servo | GPIO12 |
+| Elbow MG90S position servo | GPIO10 |
 | Lamp-head tilt SG90 position servo | GPIO11 |
 | Continuous-rotation MG90S base | GPIO15 |
+| 8-LED WS2812 ring DI | GPIO1 |
 | Camera SDA / SCL / VSYNC / PCLK / D0 / PWDN | 21 / 47 / 4 / 9 / 8 / 41 |
 | VB701N audio TX / RX / flow | 40 / 39 / 38 |
 
@@ -89,3 +90,13 @@ Tests use simulated hardware. Preview first and support the real arm before enga
 ## Third-party material
 
 See [THIRD-PARTY.md](THIRD-PARTY.md). Firmware overlays require the organizer's SDK and retain upstream notices; this repository does not grant rights to the omitted vendor SDK. Do not publish credentials in contributions.
+
+## Latest lamp update ·31 October
+
+Use the locked **final draft** reference profile for this assembly. Loading it creates an editable working copy; Studio prevents overwriting the reference. Servo direction fixes and single-servo testing are included. Ring controls provide presets/custom colour, brightness and Off for eight WS2812 LEDs on GPIO1. See [GPIO-USAGE.md](GPIO-USAGE.md) for the full map and conflicts.
+
+Large emotional gestures now run in about8seconds(Slump),13seconds(Water) and13seconds(Stretch) from saved Rest. Extra repetitions/pauses were removed while retaining quintic easing and the600µs/s cap. Preview and actual run use the same sampler. Calibration and locked profile were preserved; loaded speed/torque/current have not been measured.
+
+The newer **firmware/prebuilt/lamp-led.bin** adds LED commands. led-manifest.json contains its SHA256. Only the application was installed/ROM-verified on the team's board; boot servo outputs off, LED CLI ready, audio READY/eight sounds and camera status were checked. LED colour quality and loaded gestures still need physical observation. Do not blindly flash a full partition/model image. The overlay applies to the supplied WB03 SDK; it is not a standalone vendor SDK distribution. The current diagnostic skips normal cloud conversation. Full concurrent vision/voice integration remains separate work.
+
+Tests: run the Python scripts in tests/ using the prepared environment. test_lamp_led.py additionally needs a host gcc compiler to execute its firmware parser simulation. No physical movements occur during those tests.

@@ -1,3 +1,41 @@
+## Live base dragging
+
+After explicitly engaging the SG90 base once, drag the top-down pointer or its pulse slider to rotate the real base immediately. Drag speed controls target speed, capped at 600µs/s; release, pointer exit, focus loss or STOP freezes the current command. The pointer returns to the acknowledged command after stopping so it does not leave an unexecuted target waiting. No Move button or live-enable checkbox is needed for dragging. Before engagement it is a screen preview only. Typed pulse values and scripted previews do not automatically move the base. Use Move to preview for typed targets. Routine previews remain screen-only; routine playback uses the existing saved position checkpoints. No firmware update is required.
+
+## Remembered power setup and automatic live dragging
+
+External power/common ground is treated as already confirmed, as requested. Repeated servo and LED power checkboxes and the live-drag enable checkbox have been removed. Connect and explicitly engage a starting pose; after all three bending joints are engaged, a new deliberate drag of the top drawing or arm pulse slider automatically enables live movement. No extra checkbox is required after reconnecting. Connection/reconnection alone never engages a servo or resumes movement. Picture matching, range editing and routine preview remain screen-only. STOP ends the current drag; a subsequent new drag works automatically. Existing pulse bounds, speed limits and disconnect watchdogs remain in place.
+
+## SG90 position base — current controls
+
+The base is now a position-controlled SG90 on GPIO15, with a separate top-down view in **Rotating base**. Studio opens on this tab. Teal is the preview target; dashed gold is the last acknowledged board command. Neither is measured physical position. The drawing assumes 180° across 500–2500µs; check actual travel before using endpoints.
+
+Support the lamp, check regulated external 5V/common ground in Servo test or Pose control, start at 1500µs, and **Engage at preview…**. First engagement can jump. Drag the top-view pointer or pulse slider to choose a target; **Move to preview** moves gradually using the existing firmware's GPIO15 jog control, capped at 600µs/s. Dragging by itself changes only the preview. STOP freezes the current command rather than sending the old continuous-servo neutral. Release outputs removes holding torque.
+
+Use **Reverse drawing direction** if the estimated rotation is backwards. Point the real lamp forward, match the preview to its commanded pulse, then **Mark preview as FRONT**. Save an editable profile to retain the base's front, direction and preview alongside the existing arm calibration. Locked profiles are unchanged.
+
+**Add base pose to routine** creates a position checkpoint. Reorder it among arm checkpoints in Routine; base and bending movements execute sequentially. Preview routine animates the base pointer without USB movement. Run previewed plan checks the base's starting command and front/direction calibration. Old continuous-base timed turns are retained in old files but blocked from preview/execution; replace those rows with position checkpoints. Existing three arm actions do not invent base turns.
+
+Firmware already supports holding/jogging GPIO15 as a position channel, so no flash is required. No physical servo movement was performed to validate this update. Use your external supply; position software cannot detect mechanical collisions or force a servo beyond its real travel.
+
+## Faster emotional routines (latest, 31 October)
+
+The large key poses remain, but repeated sweeps and long pauses have been removed. Slump now takes about7.7seconds, Water13.1seconds and Stretch12.8seconds from the saved Rest. This is roughly33–57% shorter than the large slow versions. Quintic easing,600µs/s peak speed cap, electrical margins and watchdogs remain unchanged; no firmware change or faster raw servo command is required. Actual load/current/temperature are not measured, so software timing does not establish loaded mechanical safety. Preview and test each routine on the assembled lamp.
+
+## Large emotional routines (earlier, 31 October)
+
+Slump, Water and Stretch now search the full calibrated movement sector instead of restricting generated offsets to420–450µs. Generated targets stay100µs inside the500/2500 electrical edges (600–2400µs), with stick-model clearance checks along each eased segment. Joint lags are removed or a rest waypoint inserted if needed to keep a generated path above the modelled base plane. This is not a physical housing/cable/load collision model.
+
+Slump hangs its head, folds deeply inward, makes a failed recovery attempt, then opens with relief. Water pulls back to get attention, reaches nearly fully out and points emphatically before looking back. Stretch gathers into a deep coil, unfolds almost upright, opens its face and relaxes in stages. Both existing sound styles remain supported. Custom named target checkpoints retain priority.
+
+Shared quintic ease-in/ease-out sampling drives both the continuous screen preview and board glide commands;600µs/s cap and firmware small-step interpolation remain. Large moves take longer: approximately15s Slump,31s Water and19s Stretch from the saved Rest, depending on the active model. No sudden endpoint jumps or speed-limit bypass. Press Play preview first, then Run previewed plan. Physical movement was not tested in this change.
+
+The locked final draft, current calibration, other profiles, GPIO assignments and LED controls are unchanged. Reopen Studio to load the new choreography. The storyboard dramatic-routines-preview.png shows representative keyframes, not the complete animated paths.
+
+## Actual lamp motors (31 October)
+
+Lift GPIO12 is now MG996R, elbow GPIO10 is MG90S, head GPIO11 is SG90; the MG90S base GPIO15 remains continuous rotation. Open **Servo wiring** in Studio or read [CURRENT-SERVO-WIRING.md](CURRENT-SERVO-WIRING.md) for power and calibration notes. Existing 50Hz firmware works without flashing. Full500–2500µs access is retained, but the new servo's physical endpoints and horn alignment must be checked; the old prototype calibration is not a measurement of this new lamp. Reopen Studio for updated labels.
+
 ## Larger, distinct emotional gestures (latest)
 
 The three actions now last roughly4.5–5seconds from the selected left-facing Rest, superseding the earlier2second version. Slump curls inward/down with a heavy head, a hesitant recovery and a grateful nod; Water reaches outward with two clear pointing nods and a friendly wait; Stretch unfolds upward, raises its face and relaxes in stages. Existing robot/musical cues play with the movement.
@@ -141,3 +179,9 @@ Reopen Lamp Studio to load the corrected base left/right direction and head join
 The **Three actions** tab runs Slump, Water and Stretch with robot or musical sounds. Select the saved checkpoint for Rest, Slump, Water and Stretch, then Save action checkpoint choices. The current project has editable starter checkpoints preselected. Replace them with your observed positions as you calibrate. Preview is screen-only; Run plays through the attached robot speaker. All actions start at Rest, visit their action checkpoint and return to Rest. Slump/stretch hold2seconds after their cue, water holds1.2seconds. Slump/stretch finish with a happy cue on return. Sound plays on arrival, as for custom routines. Movement time and speed cap come from Pose control.
 
 Connect and engage the initial pose in Pose control before Run. No firmware change is needed. All action controls and custom checkpoint routines now live in Lamp Studio.
+# Servo orientation test (31 October 2026)
+
+Studio now opens at **Servo test**, with independently applied pulses for Lift MG996R (GPIO12), Elbow MG90S (GPIO10), and Head SG90 (GPIO11). No output engages on launch or connection. Check the shared external-power/common-ground/support box, then use **Apply pulse…** on one joint at 1500µs. Initial engagement can jump; support/unload the lamp before fitting its horn. **− Step / + Step** change only that joint from its last acknowledged command, by 10µs by default. The input beside Apply is a proposed pulse, while the status beneath it shows the last board command; that command is not measured position. Large steps ask for confirmation. Software bounds remain 500–2500µs and steps clamp to them. The new lift should initially be checked within 1000–2000µs and extended gradually only while it moves freely. Stop at binding or buzzing rather than forcing a physical endpoint. Rotating base remains a continuous speed control on GPIO15 in its separate tab.
+
+STOP and Release outputs now reserve space at the bottom of the window. Release removes holding torque; support the lamp first. Existing drawings, calibration, profiles, routines and adjustment tools are retained. Save a separate profile for the new servo/horn arrangement before using old routines. The existing firmware supports this test; no firmware change is required when Studio connects normally.
+

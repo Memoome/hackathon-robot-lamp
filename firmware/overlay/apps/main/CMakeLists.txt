@@ -49,6 +49,7 @@ set(COMPONENT_SRCS
     "./main.c"
     "./offline_audio_test_v3.c"
     "./actuator_test.c"
+    "./lamp_led.c"
     "./camera_test.c"
     "./cloud/network_setup.c"
     "./agent/agent_app.c"

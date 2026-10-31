@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "config": {
+    "version": 1,
+    "pins": [
+      12,
+      10,
+      11
+    ],
+    "upright": [
+      1000,
+      600,
+      1500
+    ],
+    "slump": [
+      1100,
+      800,
+      1550
+    ],
+    "water": [
+      1050,
+      750,
+      1600
+    ],
+    "stretch": [
+      950,
+      550,
+      1400
+    ],
+    "low": [
+      500,
+      500,
+      500
+    ],
+    "high": [
+      2500,
+      2500,
+      2500
+    ],
+    "start": [
+      1000,
+      600,
+      1500
+    ],
+    "duration": 6.0,
+    "max_speed": 60,
+    "volume": 90,
+    "style": "Robot chirps"
+  },
+  "lengths": [
+    150,
+    150,
+    65
+  ],
+  "calibration": [
+    [
+      [
+        500,
+        88.40885972880541
+      ],
+      [
+        2500,
+        -91.59114027119459
+      ]
+    ],
+    [
+      [
+        500,
+        119.89998188952232
+      ],
+      [
+        2500,
+        -60.10001811047768
+      ]
+    ],
+    [
+      [
+        500,
+        113.65460784506683
+      ],
+      [
+        2500,
+        -66.34539215493317
+      ]
+    ]
+  ],
+  "calibrated": [
+    false,
+    false,
+    false
+  ],
+  "poses": {
+    "Starter Rest": [
+      1000,
+      600,
+      1500
+    ],
+    "Starter Slump": [
+      1100,
+      800,
+      1450
+    ],
+    "Starter Water": [
+      1050,
+      750,
+      1400
+    ],
+    "Starter Stretch": [
+      950,
+      550,
+      1600
+    ],
+    "Reviewed Left Rest": [
+      1000,
+      1682,
+      1101
+    ]
+  },
+  "routine": [
+    {
+      "type": "base",
+      "name": "Base forward",
+      "direction": 1,
+      "speed": 100.0,
+      "neutral": 1500,
+      "seconds": 1.0,
+      "hold": false
+    }
+  ],
+  "matches": {},
+  "base_reverse": true,
+  "direction_fix_20261030": true,
+  "roles": {
+    "Rest": "Reviewed Left Rest",
+    "Slump": "Starter Slump",
+    "Water": "Starter Water",
+    "Stretch": "Starter Stretch"
+  },
+  "lift_direction_fix_20261030": true,
+  "full_ranges": [
+    true,
+    true,
+    true
+  ],
+  "profile_name": "final draft",
+  "preview_pulse": [
+    1000,
+    1682,
+    1101
+  ],
+  "studio_ui": {
+    "seconds": "6",
+    "speed": "60",
+    "live_max": "600",
+    "base_speed": "100",
+    "base_neutral": "1500",
+    "base_seconds": "1",
+    "action_style": "Robot chirps"
+  },
+  "head_mount_direction_fix_20261031": true,
+  "elbow_mount_direction_fix_20261031": true,
+  "head_up_direction_fix_20261031": true,
+  "profile_locked": true,
+  "locked_at": "2026-10-31T15:49:59"
+}

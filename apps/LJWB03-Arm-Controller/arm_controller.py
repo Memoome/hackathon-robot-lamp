@@ -1,5 +1,4 @@
 """Three-servo manual controller. No movement on launch; all angles are estimates."""
-import os
 import datetime,json,pathlib,queue,re,threading,time,tkinter as tk
 from tkinter import ttk,messagebox
 import serial
@@ -11,8 +10,10 @@ NAMES=('MG90S','SG90 #1','SG90 #2')
 STATUS=rb'ARM_STATUS version=1 session=(\d+) gpio=12,10,11 angles=(-?\d+),(-?\d+),(-?\d+) active=([01]),([01]),([01]) lease=([01])'
 
 def board_port():
-    found=[p.device for p in list_ports.comports() if (p.vid,p.pid)==(0x1a86,0x55d3) and (not os.environ.get('LJWB03_SERIAL') or p.serial_number==os.environ['LJWB03_SERIAL'])]
-    if len(found)!=1:raise RuntimeError('Board not found. Connect its USB data cable and press Connect.')
+    import os
+    serial_number=os.environ.get('LJWB03_SERIAL')
+    found=[p.device for p in list_ports.comports() if (p.vid,p.pid)==(0x1a86,0x55d3) and (not serial_number or p.serial_number==serial_number)]
+    if len(found)!=1:raise RuntimeError('Connect one CH343 board, or set LJWB03_SERIAL to select yours.')
     return found[0]
 
 def parse_status(raw):

@@ -4,6 +4,8 @@ import expressive_routines as e
 import visual_control as v
 p=json.loads((folder/'visual-lamp.json').read_text(encoding='utf-8'));before=copy.deepcopy(p)
 home=p['poses'][p['roles']['Rest']];y0=e.geometry(p,home)[0][-1][1]
+side=1 if e.geometry(p,home)[0][-1][0]>=0 else -1
+locked=(folder/'profiles/final draft.json').read_bytes()
 for kind in ('Slump','Water','Stretch'):
     for music in (False,True):
         rows=e.build_gesture(p,p['roles'],kind,music)
@@ -11,17 +13,25 @@ for kind in ('Slump','Water','Stretch'):
         assert rows[0]['pulse']==rows[-1]['pulse']==home
         total=0;previous=home
         for row in rows:
+            assert e.clear_path(p,previous,row,side),'Generated path crosses floor or wrong side'
+            assert all(500<=x<=2500 for x in row['pulse'])
             total+=e.trajectory_duration(previous,row,600)+row['pause'];previous=row['pulse']
-            assert e.geometry(p,row['pulse'])[0][-1][0]<0,'Lamp crossed to right side'
-        assert 3<total<7,total
-        if kind=='Slump':assert e.geometry(p,next(r['pulse'] for r in rows if 'Body gives in' in r['name']))[0][-1][1]>y0
-        if kind=='Stretch':assert e.geometry(p,next(r['pulse'] for r in rows if 'Unfold slowly' in r['name']))[0][-1][1]<y0
+        assert 5<total<16,total
+        old=e.build_compact_gesture(p,p['roles'],kind,music)
+        span=lambda rr:sum(max(r['pulse'][j] for r in rr)-min(r['pulse'][j] for r in rr) for j in range(3))
+        assert span(rows)>span(old)*2,'New gesture is not substantially larger'
+        if kind=='Slump':assert e.geometry(p,next(r['pulse'] for r in rows if 'deep sad curl' in r['name']))[0][-1][1]>y0
+        if kind=='Stretch':assert e.geometry(p,next(r['pulse'] for r in rows if 'full tall stretch' in r['name']))[0][-1][1]<y0
         start=home
         for row in rows:
             for cap in (60,120,600):
                 duration=e.trajectory_duration(start,row,cap);last=start
                 assert e.sample_motion(start,row,0,cap)[0]==start
                 assert e.sample_motion(start,row,duration,cap)[0]==row['pulse']
+                # Quintic phases start/end at rest, avoiding abrupt speed steps.
+                dt=duration/1000
+                assert max(abs(a-b) for a,b in zip(e.sample_motion(start,row,dt,cap)[0],start))<=1
+                assert max(abs(a-b) for a,b in zip(e.sample_motion(start,row,duration-dt,cap)[0],row['pulse']))<=1
                 for n in range(1,101):
                     current,_=e.sample_motion(start,row,n*duration/100,cap)
                     assert all(min(a,b)<=x<=max(a,b) for x,a,b in zip(current,start,row['pulse']))
@@ -29,6 +39,7 @@ for kind in ('Slump','Water','Stretch'):
                     last=current
             start=row['pulse']
 assert p==before,'Generator overwrote calibration or user checkpoints'
+assert (folder/'profiles/final draft.json').read_bytes()==locked
 class Fake(v.VisualLink):
     def __init__(self):
         self.state=dict(pulse=home.copy()+[0],active=[1,1,1,0],base_spin=0);self.calls=[];self.cancel=threading.Event();self.ui_alive=100000;self.emit=lambda *a:None

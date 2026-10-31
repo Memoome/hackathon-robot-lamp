@@ -1,19 +1,11 @@
-# Team handoff · 31 October 2026
+# Current shared project state ·31 October 2026
 
-Hardware is an ESP32-S3 WB03 (16MiB flash/8MiB PSRAM), four-servo lamp, BF3901 camera and VB701N mic/speaker module. The position range requested by the team is500..2500µs. Joint1 is lift, joint2 middle/elbow and joint3 head tilt; continuous base is separate.
+Main controller: apps/LJWB03-Lamp-Demo/visual_control.py. Latest behavior and limitations are in README.md and the main app guide. GPIO-USAGE.md is the full current wiring reference. Lift12=MG996R, elbow10=MG90S, head11=SG90, base15=continuousMG90S, ring1=8WS2812 LEDs. Camera/audio assignments retained.
 
-Lamp Studio contains two diagrams: top is command/model estimate, bottom is manually observed shape used for calibration. Saved full-range settings must not be shrunk to a few observed sample points. The cardboard reference profile is editable. Head face direction can be flipped separately from pulse calibration. The model has no collision/force/position sensing.
+The final draft profile preserves user-confirmed calibration; loaded copies are editable without overwriting that reference. Smooth large Slump/Water/Stretch routines use the same bounded quintic sampler in preview and hardware. Their timing is about8/13/13seconds fromRest. Original robot and music cues are retained.
 
-Latest choreography uses quintic easing and joint lags, a head-first slump/recovery, gentle bottle invitation and upward stretch/relaxation. One-click full previews play sound on the laptop; the same sampled plan can stream to the robot via existing glide commands. Agent-run software tests passed; loaded-arm behavior still depends on the user's physical calibration and observations.
+Newest diagnostic image is firmware/prebuilt/lamp-led.bin, SHA256728cc848746dd98d6c85bd501b7221b633f99bd763be632326ab66fef6d9d967. Application-only installation and inactive servo outputs, audio READY/eight sounds, camera status and non-driving LED status/invalid-command rejection were verified. Physical LED output/loaded large routines were not exercised by the agent. The earlier prebuilt lamp-demo.bin remains a recovery reference.
 
-The prebuilt lamp firmware has SHA256 abd5d0da2ae53e6094afdac37f51e7f194327bf7d8cabb4b3c1167a5703e6d0f. It was application-only flashed and digest verified on the original board; all outputs off/audio READY/eight sounds were confirmed. Firmware startup skips normal pose/voice-agent paths. Network setup is explicit and does not contain a cloud motor-action mapping.
+Wi-Fi setup is implemented; a working LJYD live voice/action bridge is not established by this diagnostic. Agent/product binding, cloud authentication, live audio testing, action mapping and concurrent pose integration remain separate verification steps. The supplied application source includes voice and plugin integration work; code availability is not proof that the device currently runs it.
 
-Prior LJYD authentication did not obtain a successful session; the reason remains unconfirmed. Enter team identity locally in the setup UI; never share secrets in issues/commits. Future actions should be explicit local routines invoked by a verified cloud event contract.
-
-Pose work is delegated to a teammate. The included static-image benchmark built separately on ESP-IDF5.4.1 with ESP-DL3.3.14; live camera conversion, temporal posture interpretation, concurrency and actual speed remain integration work. An attached MPU6050 would measure its own module's motion, not a person's pose or servo shaft position.
-
-Public export excludes private credentials/history/captures and complete tools. Some historical guides describe earlier preparation stages; this state and README are the current overview.
-
-## Latest motion update ·31October
-
-Corrected action home to Reviewed Left Rest1000/1682/1101, preserving original checkpoints and calibration. Stock actions are now larger and distinct, ~4.5–5seconds at600µs/s: Slump curls inward/down with hesitation and recovery; Water reaches outward and nods twice; Stretch opens upward and releases gradually. Joint/head geometry drives generated targets; real non-Starter checkpoints still take priority. Tests cover both styles, exact return, pulse/rate bounds, left-side sampled paths and no profile mutation. Actual Studio-rendered key poses were visually inspected. Physical collision/load checks remain necessary; no hardware actions were sent for these updates.
+The portable source export excludes credentials, private captures/history, full flash backups, installed tools and the complete vendor SDK. SDK overlay builds still require the organizer's compatible SDK and dependencies.
