@@ -25,7 +25,7 @@ The supplied **Lamp Cardboard Prototype** profile is a reference for our assembl
 | Other `apps/` folders | Manual arm/Hello, mic, camera, vibration module and Wi-Fi/LJYD setup tools |
 | `firmware/overlay/` | Application changes to apply to the organizer's WB03 SDK |
 | `firmware/prebuilt/` | Verified diagnostic lamp application and checksum; not a full flash backup |
-| `pose/` | Separate official ESP-DL static-image benchmark starter |
+| `pose/` | Static-image benchmark plus separate BF3901/YOLO live-pose source and experimental posture viewer |
 | `hardware/` | Lamp STL and supplied board/component documentation |
 | `docs/` | Development guides and architecture |
 | `tests/` | Software tests; these never prove loaded-arm mechanics |
@@ -50,7 +50,7 @@ Servos use a suitable separate regulated5V supply with ground shared with the bo
 - Auto reconnect restores USB communication only. After disconnect, support and engage the lamp deliberately; interrupted motions do not resume.
 - The three expressive routines share the same eased sampler in preview and hardware target generation. Actual transport delay, speaker buffering, load and backlash can differ.
 - The LJYD voice-agent-to-action bridge is **not integrated**. Earlier registration did not establish an authenticated cloud session. USB connection and Wi-Fi connection are separate from LJYD authentication.
-- Pose recognition is a **separate build-only static-image benchmark**, not a finished live camera/posture pipeline. Integration and combined memory/performance checks remain team work.
+- Pose work includes the original static-image benchmark and a **separate BF3901/YOLO11n-Pose camera application** under [pose/live](pose/live/README.md), with a Python skeleton viewer and experimental calibrated posture cues. Historical inference was about 7.24 seconds per frame; latest-firmware bright-scene recognition, long-run reliability and real-person posture accuracy remain unverified. It is not integrated with lamp motion/voice, and combined memory/performance checks remain team work.
 - LED/MPU6050 integration is not part of the completed lamp routines. MPU6050 is not a servo encoder.
 
 ## Teammates: build on this
@@ -60,7 +60,7 @@ Servos use a suitable separate regulated5V supply with ground shared with the bo
 Fork the repository, create a branch, make changes and open a pull request. Suggested work areas:
 
 1. **Motion/hardware:** calibrate physical poses, inspect preview, then validate clearance/load and tune gestures.
-2. **Vision:** connect live camera frames to the pinned ESP-DL model, calibrate/debounce posture events and measure runtime.
+2. **Vision:** validate the separate live camera/YOLO source on the intended board, collect posture samples and tune the existing calibration/debounce, then design lamp integration.
 3. **Cloud/voice:** finish product/device authentication in LJYD, bind the agent and implement an explicit local action-event handler.
 
 To update a clone after teammates merge changes:
