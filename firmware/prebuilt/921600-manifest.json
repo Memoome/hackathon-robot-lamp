@@ -1,0 +1,6 @@
+{
+  "baud": 921600,
+  "bytes": 1943488,
+  "sha256": "c0eb83f5c6799ac3863e26f9bc6c4edc0bdd577e5dcf689e9beaa411befd8b0d",
+  "audio_uart_baud": 2000000
+}

@@ -103,7 +103,7 @@ class App:
                     self.events.put(('close',None));return
                 if kind=='connect':
                     if s:s.close()
-                    port=board_port();s=serial.Serial(port=None,baudrate=115200,timeout=.1);s.dtr=False;s.rts=False;s.port=port;s.open()
+                    port=board_port();s=serial.Serial(port=None,baudrate=921600,timeout=.1);s.dtr=False;s.rts=False;s.port=port;s.open()
                     s.write(b'arm_live status\r\n');raw=b'';until=time.monotonic()+3
                     while time.monotonic()<until:
                         raw+=s.read(4096)

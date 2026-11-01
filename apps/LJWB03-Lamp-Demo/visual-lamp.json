@@ -162,13 +162,14 @@
     "base_speed": "100",
     "base_neutral": "1500",
     "base_seconds": "1",
-    "action_style": "Robot chirps"
+    "action_style": "Robot chirps",
+    "disable_action_base": true
   },
   "head_mount_direction_fix_20261031": true,
   "elbow_mount_direction_fix_20261031": true,
   "head_up_direction_fix_20261031": true,
   "base_position": {
-    "preview": 1099,
+    "preview": 1477,
     "reverse": true,
     "front": 90.0,
     "water_angle": 180.0

@@ -117,7 +117,7 @@ class DemoLink:
                     continue
                 if kind=='connect':
                     if self.s:self.s.close()
-                    self.session=None;p=board_port();self.s=serial.Serial(port=None,baudrate=115200,timeout=.025,rtscts=False,dsrdtr=False)
+                    self.session=None;p=board_port();self.s=serial.Serial(port=None,baudrate=921600,timeout=.025,rtscts=False,dsrdtr=False)
                     self.s.dtr=False;self.s.rts=False;self.s.port=p;self.s.open()
                     self.exchange('arm_live status');self.session=self.state['session']
                     if any(self.state['active']):raise RuntimeError('Outputs active. Support the arm and close/release the older controller first.')

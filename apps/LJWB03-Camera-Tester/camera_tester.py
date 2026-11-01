@@ -53,7 +53,7 @@ def find_board():
     return ports[0]
 
 def open_board():
-    p=find_board();s=serial.Serial(port=None,baudrate=115200,timeout=.12,rtscts=False,dsrdtr=False,xonxoff=False)
+    p=find_board();s=serial.Serial(port=None,baudrate=921600,timeout=.12,rtscts=False,dsrdtr=False,xonxoff=False)
     s.dtr=False;s.rts=False;s.port=p;s.open();s.set_buffer_size(rx_size=65536,tx_size=8192)
     return s,p
 

@@ -72,7 +72,7 @@ class Link:
             try:
                 if kind=='connect':
                     self.disconnect();port=board_port()
-                    self.s=serial.Serial(port=None,baudrate=115200,timeout=.06,rtscts=False,dsrdtr=False)
+                    self.s=serial.Serial(port=None,baudrate=921600,timeout=.06,rtscts=False,dsrdtr=False)
                     self.s.dtr=False;self.s.rts=False;self.s.port=port;self.s.open()
                     state=parse_status(self.exchange('arm_test status',STATUS));self.session=state['session']
                     if any(state['active']):raise RuntimeError('Outputs are active. Close the other controller and support the arm before reconnecting.')

@@ -67,9 +67,23 @@ class LampLink(DemoLink):
             self.hold_pause(.1)
     def start_sound(self,index,volume):
         self.check();self.emotion_status();self.audio_ready()
-        self.exchange(f'audio_test volume {volume}',rb'VOLUME requested=\d+ actual=\d+ hardware_max=31 rc=0')
+        self.set_speaker_volume(volume)
         self.audio_ready();self.check()
         self.exchange(f'audio_test emotion {index}',rb'EMOTION_QUEUED id='+str(index).encode())
+    def set_speaker_volume(self,volume):
+        if type(volume)!=int or not 0<=volume<=100:raise ValueError('Volume must be 0..100.')
+        self.check()
+        self.s.reset_input_buffer();self.s.write(f'audio_test volume {volume}\r\n'.encode());self.s.flush()
+        # The volume job finishes asynchronously. Its completion log goes to
+        # UART, so HTTP must confirm the result through synchronous status.
+        until=time.monotonic()+4
+        while True:
+            self.check();raw=self.exchange('audio_test status',rb'STATUS mode=OFFLINE_PCM[^\r\n]*')
+            status=re.search(rb'STATUS mode=OFFLINE_PCM[^\r\n]*',raw)[0]
+            actual=re.search(rb'volume=(\d+)',status)
+            if b'state=READY busy=0 chip_ready=1' in status and actual and int(actual[1])==volume:return
+            if time.monotonic()>until:raise RuntimeError('Speaker volume was not confirmed; sound not started.')
+            self.hold_pause(.1)
     def finish_sound(self,index):
         deadline=time.monotonic()+7
         while time.monotonic()<deadline:
@@ -186,7 +200,7 @@ class LampLink(DemoLink):
                     self.session=None;from wireless_link import open_connection
                     p,self.s=open_connection(board_port,serial)
                     self.exchange('arm_live status');self.session=self.state['session']
-                    if any(self.state['active']):raise RuntimeError('Earlier outputs are active. Support/release the lamp using the earlier controller first.')
+                    if any(self.state['moving']) or self.state['base_spin']:self.exchange('arm_live freeze')
                     raw=self.exchange('audio_test status',rb'STATUS mode=OFFLINE_PCM')
                     count=re.search(rb'emotion_count=(\d+)',raw)
                     self.emit('connected',(p,int(count[1]) if count else 4 if re.search(EMOTION,raw) else 0))
@@ -213,6 +227,11 @@ class LampLink(DemoLink):
                     elif kind=='sound':
                         index,volume=data;self.start_sound(index,volume);self.finish_sound(index);self.emit('finished','Sound finished. Listen to confirm quality.')
                     elif kind=='led':self.led(data)
+            except ValueError as exc:
+                # A rejected action is not a lost connection.
+                try:self.stop_hardware(False)
+                except Exception:pass
+                self.emit('finished',str(exc))
             except Cancelled as exc:
                 try:self.stop_hardware(False)
                 except Exception:pass

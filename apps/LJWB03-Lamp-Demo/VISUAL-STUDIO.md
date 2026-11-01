@@ -1,3 +1,21 @@
+## Live performance monitor and Wi-Fi sound confirmation
+
+Pressing Run for a stock action, custom routine or previewed plan now opens the same large view in **ROBOT PERFORMANCE · live commands** mode. It follows board-reported commanded pulses for the arm/base, shows a dashed target pose/direction, applies acknowledged LED colour updates, names each movement phase, and advances a phase-based progress bar. It reaches 100% only after the sequence and final sound finish. Sound labels distinguish requesting, accepted by board and completed; these are protocol confirmations, not proof that acoustic output was heard. The live Stop button stops the robot and sound. Closing the monitor during performance hides it without interrupting the robot; the main Stop remains available. Preview mode stays screen-only.
+
+Wi-Fi sound fix: volume is an asynchronous firmware job, whose completion message appears only on UART. The client no longer waits for that UART log over HTTP. It requests the volume, then polls synchronous audio status until the module is ready and the requested volume is confirmed. It then queues the sound and checks the selected cue and reported completion. This works on USB and Wi-Fi without a firmware update.
+
+Offline tests cover live display events, progress, completion vs stop/disconnect, disabled duplicate Run, and HTTP volume status polling with an empty immediate response. Actual speaker verification was deferred because the board is being used for other work. Studio is opened offline for now; enable Auto reconnect when the board is free. Do not infer that physical speaker output was verified from these offline tests.
+
+## Playback and automatic USB / Wi-Fi connection fix
+
+On connection/reconnection, Studio now probes known USB hardware and saved paired Wi-Fi concurrently, including broadcast discovery and the cached network address. The first endpoint returning valid lamp status is retained; losing probes close their handles. The old USB/Wi-Fi mode toggle no longer blocks the other route. No Wi-Fi password or pairing key is stored in the project. Search probes only request status and do not engage outputs.
+
+An explicit Run action / Run routine / Run previewed plan now prepares any released required joints at the sequence's starting pose, then executes the sequence. Connection alone never engages outputs or restarts an interrupted routine. First engagement can jump because physical shaft position is not measured. Existing active joints preserve their commands until the planned movement. Sound, bounds and LED availability checks happen before engagement. Invalid action inputs or rejected commands show a message while retaining the connection rather than falsely reporting disconnection.
+
+Firmware now accepts **arm_live target GPIO PULSE SPEED** and computes motion limits from the current pulse under the board's own lock. This prevents the old base jog command rejecting stale host-side bounds while the base is already moving. Base manual moves, live dragging and coordinated actions use this atomic target command. Wi-Fi and all ten sounds are preserved.
+
+Bench verification completed the same short coordinated arm/base/LED sequence on the actual board via USB and paired Wi-Fi, with external servo power OFF. Both transports reached their commanded endpoints, remained connected after a deliberate rejected command, and released all outputs afterward. No physical motion or speaker playback was tested. For USB removal, the board must retain a separate power source to keep Wi-Fi running. A lost connection cancels remaining routine steps; reconnect does not replay them automatically.
+
 ## Expanded action preview
 
 Every action/routine preview automatically opens a separate **Lamp Studio · action preview** window. It keeps a larger side-view lamp, top-down base direction, angle relative to FRONT, a colour hue tile, actual RGB output tile, brightness bar, phase name, sound cue and progress visible together. The lamp emitter/beam changes colour too. The full-brightness hue tile helps identify very dim colours; the output tile and brightness value retain the actual commanded RGB intensity. Brightness is the peak RGB channel percentage, not a measured light level.

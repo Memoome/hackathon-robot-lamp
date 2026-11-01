@@ -65,7 +65,7 @@ class BoardLink:
     def open(self):
         if self.serial:self.serial.close()
         self.port=find_board()
-        s=serial.Serial(port=None,baudrate=115200,timeout=.08,rtscts=False,dsrdtr=False,xonxoff=False)
+        s=serial.Serial(port=None,baudrate=921600,timeout=.08,rtscts=False,dsrdtr=False,xonxoff=False)
         s.dtr=False;s.rts=False;s.port=self.port;s.open()
         self.serial=s
         state=validate_status(self.exchange('act_test status',rb'ACT_STATUS[^\r\n]*motor_active=[01]'))

@@ -238,6 +238,17 @@ static void live_command(char *out,int out_len,int argc,char **argv)
         int was_spinning=base_spinning;release_all_locked();
         if(was_spinning && live_write(3,base_neutral)==ESP_OK){deadlines[3]=-1;base_stop_until=now+250000;}
         live_status();
+    } else if(argc==5 && !strcmp(argv[1],"target") && bounded(argv[2],10,15,&pin) && live_index(pin)>=0 && bounded(argv[3],500,2500,&pulse) && bounded(argv[4],10,600,&speed)){
+        int i=live_index(pin);
+        if(!deadlines[i] || live_pulse[i]<500 || (i==3 && base_spinning))QM_LOGW(TAG,"LIVE_ERROR engage_first");
+        else{
+            int d=pulse>live_pulse[i]?1:pulse<live_pulse[i]?-1:0;
+            if(d!=live_dir[i])live_fraction[i]=0;
+            live_dir[i]=d;live_speed[i]=speed;
+            live_lo[i]=pulse<live_pulse[i]?pulse:live_pulse[i];
+            live_hi[i]=pulse>live_pulse[i]?pulse:live_pulse[i];
+            live_motion_until[i]=d?now+400000:0;live_hold[i]=1;deadlines[i]=-1;arm_lease=now+5000000;live_status();
+        }
     } else if(argc==6 && !strcmp(argv[1],"glide") && bounded(argv[2],500,2500,&pulse) &&
               bounded(argv[3],500,2500,&lo) && bounded(argv[4],500,2500,&hi) && bounded(argv[5],10,600,&speed)){
         if(live_glide(pulse,lo,hi,speed,now))live_status();else QM_LOGW(TAG,"LIVE_ERROR engage_first");

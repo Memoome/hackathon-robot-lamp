@@ -33,6 +33,12 @@ def finite(x,lo,hi):
     if isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) or not lo<=x<=hi:raise ValueError(f'Use a number within {lo}..{hi}.')
     return x
 
+def without_base_motion(rows):
+    result=copy.deepcopy(rows)
+    result=[row for row in result if row.get('type') not in ('base','base_position')]
+    for row in result:row.pop('base_pulse',None)
+    return result
+
 def led_rgb(colour,brightness):
     if not isinstance(colour,str) or len(colour)!=7 or colour[0]!='#':raise ValueError('Choose a colour in #RRGGBB format.')
     try:rgb=[int(colour[n:n+2],16) for n in (1,3,5)]
@@ -195,15 +201,28 @@ class VisualLink(LampLink):
             check_pose(row['pulse'],cfg);finite(row['seconds'],.1 if row.get('easing')=='quintic' else 1,30);finite(row['pause'],0,30)
             if row['sound']>=count:raise ValueError('Board firmware does not include the selected sound.')
         self.exchange('arm_live status')
-        if any(row.get('type')=='base_position' or 'base_pulse' in row for row in rows) and not self.state['active'][3]:raise ValueError('Engage the SG90 base first before running this action.')
-        if any(row.get('type') not in ('base','base_position') for row in rows) and (self.state['active'][:3]!=[1,1,1] or self.state['base_spin']):raise ValueError('Set the initial pose first and keep the base stopped.')
         if any('light_progress' in row or 'warm_level' in row or 'light_rgb' in row for row in rows):
             raw=self.exchange('lamp_led status',rb'LED_(?:STATUS|ERROR)[^\r\n]*')
             match=re.search(rb'LED_STATUS[^\r\n]* r=(\d+) g=(\d+) b=(\d+)',raw)
             if not match:raise ValueError('LED ring control is unavailable; emotion was not started.')
             self.light_origin=list(map(int,match.groups()));self.light_current=self.light_origin.copy()
+            self.emit('emotion_light',self.light_origin.copy())
+        if cfg.get('run_engage'):
+            start=cfg['run_start'];check_pose(start,cfg);finite(cfg['run_base_start'],500,2500)
+            if any(row.get('type')!='base_position' for row in rows):
+                for i,pin in enumerate((12,10,11)):
+                    self.check()
+                    if not self.state['active'][i]:self.exchange(f'arm_live engage {pin} {start[i]} 1')
+            if any('base_pulse' in row or row.get('type')=='base_position' for row in rows) and not self.state['active'][3]:
+                base=cfg['run_base_start'];finite(base,500,2500);self.check()
+                self.exchange(f'arm_live engage 15 {base} 1')
+        if any(row.get('type')=='base_position' or 'base_pulse' in row for row in rows) and not self.state['active'][3]:raise ValueError('Engage the SG90 base first before running this action.')
+        if any(row.get('type') not in ('base','base_position') for row in rows) and (self.state['active'][:3]!=[1,1,1] or self.state['base_spin']):raise ValueError('Set the initial pose first and keep the base stopped.')
         pending=None
         for n,row in enumerate(rows,1):
+            self.performance_context=(n,len(rows))
+            self.emit('run_phase',dict(index=n,total=len(rows),name=row['name'],pulse=row.get('pulse'),base=row.get('base_pulse',row.get('pulse') if row.get('type')=='base_position' else None)))
+            self.report_run_progress(0)
             self.check();self.emit('phase',f"Checkpoint {n}/{len(rows)} · {row['name']}")
             if row.get('type')=='base_position':self.position_base(row);continue
             if row.get('type')=='base':
@@ -212,13 +231,27 @@ class VisualLink(LampLink):
                 if row['sound']>=0:
                     if pending is not None:self.finish_sound(pending)
                     self.start_sound(row['sound'],cfg['volume']);pending=row['sound']
-                self.expressive_glide(row,cfg);self.hold_pause(row['pause']);continue
+                self.expressive_glide(row,cfg);self.hold_pause(row['pause']);self.report_run_progress(1);continue
             self.glide(row['pulse'],row['seconds'],cfg)
             if row['sound']>=0:
                 self.start_sound(row['sound'],cfg['volume']);self.finish_sound(row['sound'])
             self.hold_pause(row['pause'])
+            self.report_run_progress(1)
         if pending is not None:self.finish_sound(pending)
+        self.emit('run_complete',None);self.performance_context=None
         self.emit('finished','Done. Last commanded pose is holding.')
+    def report_run_progress(self,fraction):
+        context=getattr(self,'performance_context',None)
+        if context:
+            index,total=context;self.emit('run_progress',min(99,100*(index-1+max(0,min(1,fraction)))/total))
+    def start_sound(self,index,volume):
+        self.emit('run_sound',(index,'requesting'))
+        super().start_sound(index,volume)
+        state,selected=self.emotion_status()
+        if selected!=index or state not in (1,2):raise RuntimeError('Speaker rejected the sound cue.')
+        self.emit('run_sound',(index,'accepted by board'))
+    def finish_sound(self,index):
+        super().finish_sound(index);self.emit('run_sound',(index,'completed'))
     def expressive_glide(self,row,cfg):
         start=self.state['pulse'][:3].copy()
         base_start=self.state['pulse'][3] if 'base_pulse' in row else 1500
@@ -234,6 +267,7 @@ class VisualLink(LampLink):
                 self.set_emotion_light(rgb);light_last=time.monotonic()-begin
             if 'base_pulse' in row:self.command_base_target(row['base_pulse'],base_speed)
             self.exchange('arm_live glide '+' '.join(map(str,(*pose,cfg['max_speed']))))
+            self.report_run_progress(.9*min(1,(time.monotonic()-begin)/duration))
             if time.monotonic()-begin>=duration:break
             self.wait_until(time.monotonic()+.05)
         # Account for transport lag without jumping to an unacknowledged target.
@@ -247,7 +281,7 @@ class VisualLink(LampLink):
                 self.wait_until(time.monotonic()+.05)
     def command_base_target(self,target,speed):
         current=self.state['pulse'][3]
-        if current!=target:self.exchange(f'arm_live jog 15 {int(target>current)} {speed} {min(current,target)} {max(current,target)} 1')
+        if current!=target:self.exchange(f'arm_live target 15 {target} {speed}')
     def set_emotion_light(self,rgb):
         self.check()
         if rgb!=self.light_current:
@@ -281,9 +315,10 @@ class VisualLink(LampLink):
             try:
                 while self.state['pulse'][3]!=target:
                     self.check()
-                    self.exchange(f'arm_live jog 15 {int(target>start)} {speed} {min(start,target)} {max(start,target)} 1')
+                    self.exchange(f'arm_live target 15 {target} {speed}')
                     if time.monotonic()>deadline:raise RuntimeError('Base move timed out.')
                     self.wait_until(time.monotonic()+.05)
+                    self.report_run_progress(.9*(1-abs(target-self.state['pulse'][3])/max(1,abs(target-start))))
             finally:self.exchange('arm_live freeze')
     def live_base(self):
         self.check();self.exchange('arm_live status')
@@ -295,7 +330,7 @@ class VisualLink(LampLink):
                 finite(target,500,2500);finite(speed,10,600)
                 current=self.state['pulse'][3]
                 if current!=target:
-                    self.exchange(f'arm_live jog 15 {int(target>current)} {speed} {min(current,target)} {max(current,target)} 1')
+                    self.exchange(f'arm_live target 15 {target} {speed}')
                 else:self.exchange('arm_live freeze')
                 self.wait_until(time.monotonic()+.05)
         finally:self.exchange('arm_live freeze')
@@ -304,7 +339,7 @@ class App:
     def __init__(self,root):
         self.root=root;self.p=fresh();self.events=queue.Queue();self.state=None;self.connected=False;self.busy=False;self.count=0;self.dragging=None;self.preview_token=0;self.match_angles=None;self.match_pulse=None
         self.live_stream=False;self.control_held=False;self.last_live=None;self.real_angles=None;self.real_dragging=None
-        self.previewing=False;self.preview_plan=None
+        self.previewing=False;self.preview_plan=None;self.performance_active=False;self.performance_target=None;self.performance_base_target=None
         self.real_reference=None
         self.closing=False;self.disconnecting=False;self.retry_at=time.monotonic()+1.5;self.retry_count=0
         self.auto_connect=tk.BooleanVar(value=True)
@@ -504,7 +539,7 @@ class App:
         ttk.Button(ranges,text='Save full 180° range for selected joint',command=lambda:self.attempt(self.save_range)).pack(fill='x',pady=12)
         self.range_info=tk.StringVar();ttk.Label(ranges,textvariable=self.range_info,wraplength=470).pack(anchor='w',pady=6)
         ttk.Label(ranges,text='This maps the configured pulse limits to a 180° drawing.\nIt cannot extend the physical servo or guarantee clearance.\nKeep the robot supported and test slowly after saving.\nYour observed-arm adjustments will align this sector without shrinking it.',wraplength=470).pack(anchor='w',pady=10)
-        actions=ttk.Frame(tabs,padding=10);tabs.add(actions,text='Actions')
+        actions=ttk.Frame(tabs,padding=10);actions_tab=actions;tabs.add(actions,text='Actions')
         actions_host=actions
         actions_scroll=tk.Canvas(actions_host,highlightthickness=0)
         actions_bar=ttk.Scrollbar(actions_host,orient='vertical',command=actions_scroll.yview)
@@ -514,6 +549,9 @@ class App:
         actions.bind('<Configure>',lambda e:actions_scroll.configure(scrollregion=actions_scroll.bbox('all')))
         actions_scroll.bind('<Configure>',lambda e:actions_scroll.itemconfigure(actions_window,width=e.width))
         ttk.Label(actions,text='Actions & emotions',font=('Segoe UI',16,'bold')).pack(anchor='w',pady=8)
+        self.disable_action_base=tk.BooleanVar(value=self.p.get('studio_ui',{}).get('disable_action_base',True))
+        ttk.Checkbutton(actions,text='Disable base rotation · previews AND robot actions',variable=self.disable_action_base,command=self.change_action_base).pack(anchor='w',pady=6)
+        ttk.Label(actions,text='Tick while calibrating the arm. Manual base controls stay available.',wraplength=470).pack(anchor='w')
         ttk.Label(actions,text='Expressive gestures · one click plays the whole preview.\nRest is your home pose; real checkpoints take priority.\nStarter guesses use small movements shaped by the lamp model.',wraplength=470).pack(anchor='w',pady=8)
         self.roles={};self.role_boxes=[]
         for key in ('Rest','Slump','Water','Stretch'):
@@ -532,8 +570,8 @@ class App:
         self.playback_text=tk.StringVar(value='One click plays the full animated gesture with sound.')
         ttk.Label(actions,textvariable=self.playback_text,wraplength=470).pack(anchor='w',pady=(10,4))
         self.playback_progress=tk.DoubleVar(value=0);ttk.Progressbar(actions,variable=self.playback_progress,maximum=100).pack(fill='x',pady=4)
-        ttk.Button(profilebar,text='▶ Actions',command=lambda:tabs.select(actions)).pack(side='left',padx=5)
-        tabs.select(base)
+        ttk.Button(profilebar,text='▶ Actions',command=lambda:tabs.select(actions_tab)).pack(side='left',padx=5)
+        tabs.select(actions_tab)
         ttk.Label(routine,text='Select a checkpoint in Pose control, then add it here.\nEach row stores its own pulse values. Sound plays on arrival.',wraplength=490).pack(anchor='w')
         self.pause=tk.StringVar(value='1');self.sound=tk.StringVar(value='None');self.field(routine,'Pause after sound (seconds)',self.pause)
         ttk.Combobox(routine,textvariable=self.sound,values=SOUNDS,state='readonly').pack(fill='x',pady=6)
@@ -583,10 +621,10 @@ class App:
             except (ValueError,KeyError):pass
         self.profile_box.configure(values=sorted(names))
     def capture_ui(self):
-        return dict(seconds=self.seconds.get(),speed=self.speed.get(),live_max=self.live_max.get(),base_speed=self.base_speed.get(),base_neutral=self.base_neutral.get(),base_seconds=self.base_seconds.get(),action_style=self.action_style.get())
+        return dict(seconds=self.seconds.get(),speed=self.speed.get(),live_max=self.live_max.get(),base_speed=self.base_speed.get(),base_neutral=self.base_neutral.get(),base_seconds=self.base_seconds.get(),action_style=self.action_style.get(),disable_action_base=self.disable_action_base.get())
     def apply_ui_preferences(self):
         for key,value in self.p.get('studio_ui',{}).items():
-            if key in ('seconds','speed','live_max','base_speed','base_neutral','base_seconds','action_style'):getattr(self,key).set(value)
+            if key in ('seconds','speed','live_max','base_speed','base_neutral','base_seconds','action_style','disable_action_base'):getattr(self,key).set(value)
         self.live_enabled.set(False)
     def profile_path(self,name):
         if not name.strip() or any(ch in name for ch in '/\\:*?"<>|') or name.rstrip(' .')!=name:raise ValueError('Choose a simple profile name without path characters.')
@@ -789,7 +827,13 @@ class App:
         if self.range_edit.get():raise ValueError('Save or exit range editing before moving.')
         if self.previewing:raise ValueError('Stop or finish the screen preview before sending robot commands.')
         if kind!='connect' and not self.connected:raise ValueError('Connect board first.')
-        self.preview_token+=1;self.busy=True;self.link.submit(kind,data)
+        self.preview_token+=1;self.busy=True
+        if kind=='slump' and isinstance(data,tuple):
+            self.performance_active=True;self.performance_started=time.monotonic()
+            self.end_control();self.base_release();self.open_preview_view(live=True)
+            self.preview_phase.set('Preparing robot sequence…');self.preview_cue.set('Sound: waiting for cue')
+            self.playback_progress.set(0);self.playback_text.set('Robot performance · preparing starting pose')
+        self.link.submit(kind,data)
     def ready(self):
         if not self.connected or not self.power.get():raise ValueError('Connect the board first.')
         if self.busy:raise ValueError('Wait for completion or press STOP.')
@@ -906,7 +950,17 @@ class App:
         if self.busy or self.previewing:raise ValueError('Stop the preview or movement first.')
         self.p['poses']['My action Rest']=self.pulse();self.roles['Rest'].set('My action Rest');self.save_roles();self.refresh_lists()
         self.status.set('Current picture saved as action Rest. No robot movement sent.')
+    def change_action_base(self):
+        if self.busy:
+            self.disable_action_base.set(not self.disable_action_base.get())
+            messagebox.showinfo('Stop first','Stop the running action before changing base rotation.',parent=self.root);return
+        self.cancel_preview();self.preview_plan=None;self.save()
+        self.status.set('Base rotation disabled in previews and action runs.' if self.disable_action_base.get() else 'Base rotation enabled. Preview again before running.')
+    def filter_action_base(self,rows):
+        return without_base_motion(rows) if self.disable_action_base.get() else copy.deepcopy(rows)
     def action_rows(self,kind):
+        return self.filter_action_base(self._action_rows(kind))
+    def _action_rows(self,kind):
         if kind=='Happy':
             project=copy.deepcopy(self.p);project['base_position']=self.base_settings()
             return build_happy(project,{key:var.get() for key,var in self.roles.items()},self.action_style.get()=='Musical tones')
@@ -919,8 +973,13 @@ class App:
         return build_gesture(project,{key:var.get() for key,var in self.roles.items()},kind,self.action_style.get()=='Musical tones')
     def run_action(self,kind):
         self.ready();rows=self.action_rows(kind)
-        if messagebox.askokcancel('Run '+kind,'Run '+kind+' using the selected checkpoints? Check clearance and support the lamp before first engagement.',parent=self.root):
-            self.save_roles();self.send('slump',(rows,self.gesture_config(rows),self.count))
+        if messagebox.askokcancel('Run '+kind,'Run '+kind+' using the selected checkpoints? Released joints will engage at the starting pose. Check clearance.',parent=self.root):
+            self.save_roles();self.send('slump',(rows,self.run_config(rows,self.gesture_config(rows)),self.count))
+    def run_config(self,rows,cfg,start=None,base=None):
+        cfg=copy.deepcopy(cfg);cfg['run_engage']=True
+        cfg['run_start']=list(start or next((r['pulse'] for r in rows if r.get('type')!='base_position'),cfg['start']))
+        cfg['run_base_start']=int(base if base is not None else self.state['pulse'][3] if self.state and self.state['active'][3] else round(self.base_target.get()))
+        return cfg
     def add_base(self,d):
         self.p['routine'].append(self.base_row(d));self.save();self.refresh_lists()
     def engage(self):self.attempt(self._engage)
@@ -1089,8 +1148,9 @@ class App:
     def run(self):self.attempt(self._run)
     def _run(self):
         self.ready()
-        if not self.p['routine']:raise ValueError('Append checkpoints first.')
-        if messagebox.askokcancel('Run checkpoints','Run the saved checkpoints on the lamp? Check clearance along the entire path. STOP cancels the remaining routine.',parent=self.root):self.send('slump',(copy.deepcopy(self.p['routine']),self.config(),self.count))
+        rows=self.filter_action_base(self.p['routine'])
+        if not rows:raise ValueError('No arm checkpoints to run. Base-only steps are skipped when base rotation is disabled.')
+        if messagebox.askokcancel('Run checkpoints','Run the saved checkpoints on the lamp? Released joints will engage at the starting pose. STOP cancels the remaining routine.',parent=self.root):self.send('slump',(rows,self.run_config(rows,self.config()),self.count))
     def cancel_preview(self):
         if self.previewing:
             self.preview_token+=1;self.previewing=False;self.preview_plan=None
@@ -1100,14 +1160,14 @@ class App:
     def _preview(self,rows=None):
         if self.busy or self.match_angles is not None or self.range_edit.get():raise ValueError('Finish movement or calibration before previewing.')
         self.cancel_preview();self.end_control();self.live_enabled.set(False)
-        rows=copy.deepcopy(self.p['routine'] if rows is None else rows)
+        rows=self.filter_action_base(self.p['routine'] if rows is None else rows)
         if not rows:raise ValueError('Add routine checkpoints first.')
         if any(row.get('type')=='base' for row in rows):raise ValueError('Replace old timed base turns with SG90 position checkpoints before previewing.')
         candidate=copy.deepcopy(self.p);candidate['routine']=rows;check_project(candidate)
         cfg=self.gesture_config(rows);start=self.state['pulse'][:3].copy() if self.connected and self.state and self.state['active'][:3]==[1,1,1] else self.pulse()
         check_pose(start,cfg)
         self.preview_plan=dict(rows=rows,cfg=cfg,start=start,calibration=copy.deepcopy(self.p['calibration']),lengths=self.p['lengths'].copy(),head_face_sign=self.p.get('head_face_sign',1))
-        base_start=self.state['pulse'][3] if self.connected and self.state and self.state['active'][3] else 1500
+        base_start=self.state['pulse'][3] if self.connected and self.state and self.state['active'][3] else round(self.base_target.get())
         self.preview_plan['base_start']=base_start
         self.preview_plan['base_geometry']=(self.base_reverse.get(),self.base_front)
         light_origin=getattr(self,'last_led_rgb',led_rgb(self.led_colour.get(),round(self.led_brightness.get()))).copy()
@@ -1199,24 +1259,25 @@ class App:
         if self.previewing:raise ValueError('Wait for the preview to finish first.')
         plan=self.preview_plan
         if plan and any(row.get('type')=='base_position' or 'base_pulse' in row for row in plan['rows']):
-            if not self.state or not self.state['active'][3] or self.state['pulse'][3]!=plan['base_start']:raise ValueError('Base start changed or is released. Engage it, then preview again.')
+            if self.state and self.state['active'][3] and self.state['pulse'][3]!=plan['base_start']:raise ValueError('Base start changed. Preview again.')
             if (self.base_reverse.get(),self.base_front)!=plan['base_geometry']:raise ValueError('Base drawing calibration changed. Preview again.')
         if not plan:raise ValueError('Preview a complete action or routine first.')
         if plan['calibration']!=self.p['calibration'] or plan['lengths']!=self.p['lengths'] or plan.get('head_face_sign',1)!=self.p.get('head_face_sign',1):raise ValueError('The lamp model changed. Preview again before running.')
-        if any(row.get('type')!='base_position' for row in plan['rows']) and (not self.state or self.state['active'][:3]!=[1,1,1] or self.state['pulse'][:3]!=plan['start']):raise ValueError('The robot starting pose differs from the preview. Preview again from its current position.')
-        if messagebox.askokcancel('Run previewed plan','Run exactly the previewed checkpoints, speed limit, pauses and sounds? Physical clearance still needs checking.',parent=self.root):
-            self.send('slump',(copy.deepcopy(plan['rows']),copy.deepcopy(plan['cfg']),self.count))
+        if any(row.get('type')!='base_position' for row in plan['rows']) and self.state and any(active and pulse!=target for active,pulse,target in zip(self.state['active'][:3],self.state['pulse'][:3],plan['start'])):raise ValueError('The robot starting pose differs from the preview. Preview again from its current position.')
+        if messagebox.askokcancel('Run previewed plan','Run exactly the previewed checkpoints, speed limit, pauses and sounds? Released joints will engage at the preview starting pose. Check clearance.',parent=self.root):
+            self.send('slump',(copy.deepcopy(plan['rows']),self.run_config(plan['rows'],plan['cfg'],plan['start'],plan['base_start']),self.count))
     def show_emotion_light(self,rgb):
         self.preview_rgb=rgb.copy()
         colour='#'+''.join(f'{x:02x}' for x in rgb)
         self.emotion_light.configure(bg=colour,text=f'Emotion light · RGB {rgb[0]}, {rgb[1]}, {rgb[2]}',fg='white' if max(rgb)<150 else 'black')
         self.led_sample.configure(bg=colour)
         self.draw_preview_view()
-    def open_preview_view(self):
+    def open_preview_view(self,live=False):
         if hasattr(self,'preview_window') and self.preview_window.winfo_exists():
-            self.preview_window.deiconify();self.preview_window.lift();return
+            self.set_monitor_mode(live);self.preview_window.deiconify();self.preview_window.lift();return
         w=tk.Toplevel(self.root);self.preview_window=w;w.title('Lamp Studio · action preview');w.geometry('1080x760');w.minsize(860,650);w.configure(bg='#12232e')
-        tk.Label(w,text='ACTION PREVIEW · screen only',bg='#12232e',fg='#dceaf2',font=('Segoe UI',18,'bold')).pack(anchor='w',padx=18,pady=(12,4))
+        self.monitor_heading=tk.StringVar()
+        tk.Label(w,textvariable=self.monitor_heading,bg='#12232e',fg='#dceaf2',font=('Segoe UI',18,'bold')).pack(anchor='w',padx=18,pady=(12,4))
         self.preview_phase=tk.StringVar(value='Preparing preview');self.preview_cue=tk.StringVar(value='Sound cue: none yet')
         tk.Label(w,textvariable=self.preview_phase,bg='#12232e',fg='white',font=('Segoe UI',13,'bold')).pack(anchor='w',padx=18)
         body=tk.Frame(w,bg='#12232e');body.pack(fill='both',expand=True,padx=12,pady=8)
@@ -1230,16 +1291,27 @@ class App:
         ttk.Progressbar(w,variable=self.playback_progress,maximum=100).pack(fill='x',padx=18,pady=6)
         ttk.Label(w,textvariable=self.playback_text).pack(fill='x',padx=18)
         buttons=ttk.Frame(w,padding=8);buttons.pack(fill='x')
-        ttk.Button(buttons,text='Stop preview',command=self.cancel_preview).pack(side='left')
-        ttk.Button(buttons,text='Run previewed plan on robot…',command=lambda:self.attempt(self.run_previewed)).pack(side='right')
+        ttk.Checkbutton(buttons,text='Disable base rotation',variable=self.disable_action_base,command=self.change_action_base).pack(side='left',padx=8)
+        self.monitor_stop=ttk.Button(buttons,text='Stop preview',command=self.cancel_preview);self.monitor_stop.pack(side='left')
+        self.monitor_run=ttk.Button(buttons,text='Run previewed plan on robot…',command=lambda:self.attempt(self.run_previewed));self.monitor_run.pack(side='right')
         tk.Label(w,text='Estimated geometry and commanded angles · no collision or position sensors',bg='#12232e',fg='#92aebb').pack(pady=(0,8))
-        def close():self.cancel_preview();w.destroy()
+        def close():
+            if self.performance_active:w.withdraw()
+            else:self.cancel_preview();w.destroy()
         w.protocol('WM_DELETE_WINDOW',close)
         for canvas in (self.preview_arm,self.preview_base,self.preview_lights):canvas.bind('<Configure>',lambda e:self.draw_preview_view())
+        self.set_monitor_mode(live)
+    def set_monitor_mode(self,live):
+        self.monitor_heading.set('ROBOT PERFORMANCE · live commands' if live else 'ACTION PREVIEW · screen only')
+        self.preview_window.title('Lamp Studio · robot performance' if live else 'Lamp Studio · action preview')
+        self.monitor_stop.configure(text='STOP robot + sound' if live else 'Stop preview',command=self.stop if live else self.cancel_preview)
+        self.monitor_run.configure(state='disabled' if live else 'normal')
     def draw_preview_view(self):
         if not hasattr(self,'preview_window') or not self.preview_window.winfo_exists():return
         rgb=getattr(self,'preview_rgb',[0,0,0]);colour='#'+''.join(f'{v:02x}' for v in rgb)
         c=self.preview_arm;c.delete('all');pts=self.coords(self.pulse(),c)
+        if self.performance_active and isinstance(self.performance_target,list):
+            target=self.coords(self.performance_target,c);c.create_line(*[value for pt in target for value in pt],fill='#879dad',width=4,dash=(6,5))
         for i in range(3):c.create_line(*pts[i],*pts[i+1],fill=COLORS[i],width=12,capstyle='round')
         self.lamp_details(c,pts)
         b=self.preview_base;b.delete('all');x=max(200,b.winfo_width())/2;y=140;r=90
@@ -1251,6 +1323,7 @@ class App:
         for a in range(0,180,3):b.create_line(*point(a),*point(a+3),fill='#526b7b',width=3)
         for a in (0,45,90,135,180):b.create_text(*point(a,r+16),text=f'{a}°',fill='#c6d8e3')
         b.create_oval(x-27,y-27,x+27,y+27,fill='#354f5d',outline='#8aa4ae')
+        if self.performance_active and self.performance_base_target is not None:b.create_line(x,y,*point(base_angle(self.performance_base_target,self.base_reverse.get())),fill='#879dad',width=3,dash=(6,5),arrow='last')
         b.create_line(x,y,*point(angle),fill='#36d7d9',width=9,arrow='last')
         b.create_text(x,253,text=f'{angle:.0f}°  ·  {relative:+.0f}° from FRONT',fill='white',font=('Segoe UI',13,'bold'))
         l=self.preview_lights;l.delete('all');w=max(200,l.winfo_width());peak=max(rgb);level=peak/255
@@ -1262,6 +1335,8 @@ class App:
         l.create_rectangle(20,145,20+(w-40)*level,163,fill=hue_colour,outline='')
         l.create_text(w/2,183,text=f'Brightness {level:.0%} · RGB {rgb[0]}, {rgb[1]}, {rgb[2]}',fill='white',font=('Segoe UI',10,'bold'))
     def stop(self):
+        if self.performance_active:
+            self.performance_active=False;self.preview_phase.set('Robot sequence stopped');self.playback_text.set('Stopped · remaining steps cancelled')
         self.cancel_preview()
         self.end_control();self.live_enabled.set(False)
         self.base_release()
@@ -1292,12 +1367,7 @@ class App:
         if self.closing or self.disconnecting or self.connected or self.busy or not self.auto_connect.get() or now<self.retry_at:return
         self.retry_at=now+min(10,1.5*2**min(self.retry_count,3))
         if self.previewing or self.range_edit.get() or self.match_angles is not None:return
-        from wireless_link import settings
-        try:
-            if not settings().get('enabled'):board_port()
-        except Exception:
-            self.connection.set('Waiting for board USB…');return
-        self.connection.set('Reconnecting…');self.send('connect')
+        self.connection.set('Searching USB + Wi-Fi…');self.send('connect')
     def poll(self):
         self.link.ui_alive=time.monotonic()
         if self.base_control_held and self.link.base_live_held and hasattr(self.link,'base_live_target'):
@@ -1308,14 +1378,22 @@ class App:
                 if kind=='connected':
                     self.connected=True;self.busy=False;self.count=data[1];self.retry_count=0;self.connection.set(f'{data[0]} · {self.count} sounds ready')
                     self.power.set(True)
-                    self.live_enabled.set(False);self.status.set('Connected. Movement will not resume automatically; engage the supported lamp when ready.')
+                    self.live_enabled.set(False);self.status.set('Connected. Choose an action and press Run; released joints are prepared when you run.')
                 elif kind=='state':
-                    self.state=data;self.draw()
+                    self.state=data
+                    if self.performance_active:
+                        for i,value in enumerate(data['pulse'][:3]):
+                            if data['active'][i] and 500<=value<=2500:self.pulses[i].set(value)
+                        if data['active'][3] and 500<=data['pulse'][3]<=2500:self.base_target.set(data['pulse'][3])
+                        self.draw_preview_view()
+                    self.draw()
                     for i,label in enumerate(self.test_states):
                         label.set(f"Command: {data['pulse'][i]}µs · "+('engaged' if data['active'][i] else 'released; position unknown'))
                     self.base_status.set(f"Base command: {data['pulse'][3]}µs · "+('engaged (estimated position)' if data['active'][3] else 'released; position unknown'));self.draw_base()
                 elif kind=='phase':self.status.set(data)
                 elif kind=='finished':
+                    if self.performance_active:
+                        self.performance_active=False;self.preview_phase.set(str(data));self.playback_text.set('Sequence ended · '+str(data))
                     led_match=re.search(r'LED_STATUS[^\r\n]* r=(\d+) g=(\d+) b=(\d+)',str(data))
                     if led_match:self.last_led_rgb=list(map(int,led_match.groups()))
                     if self.base_stream:
@@ -1324,11 +1402,27 @@ class App:
                     was_live=self.live_stream;self.busy=False;self.live_stream=False;self.status.set(data)
                     if was_live:self.end_control();self.use_current()
                 elif kind=='error':
+                    if self.performance_active:
+                        self.performance_active=False;self.preview_phase.set('Connection lost · sequence cancelled');self.playback_text.set(str(data))
                     self.connected=False;self.busy=False;self.live_stream=False;self.live_enabled.set(False);self.end_control();self.base_release();self.power.set(False);self.state=None;self.preview_plan=None
                     self.retry_count+=1;self.retry_at=time.monotonic()+min(10,1.5*2**min(self.retry_count-1,3));self.connection.set('Disconnected · retry scheduled' if self.auto_connect.get() else 'Disconnected');self.status.set(data)
                     for label in self.test_states:label.set('Disconnected · physical position unknown')
                 elif kind=='emotion_light':
                     self.last_led_rgb=data.copy();self.show_emotion_light(data)
+                elif kind=='run_phase':
+                    if self.performance_active:
+                        self.preview_phase.set(f"{data['index']}/{data['total']} · {data['name']}")
+                        self.performance_target=data['pulse'];self.performance_base_target=data['base'];self.draw_preview_view()
+                elif kind=='run_progress':
+                    if self.performance_active:
+                        self.playback_progress.set(data)
+                        self.playback_text.set(f'Robot performance · {data:.0f}% · {time.monotonic()-self.performance_started:.1f}s elapsed')
+                elif kind=='run_sound':
+                    if self.performance_active:self.preview_cue.set('Robot speaker · '+SOUNDS[data[0]+1]+' · '+data[1])
+                elif kind=='run_complete':
+                    if self.performance_active:
+                        self.playback_progress.set(100);self.preview_phase.set('Robot sequence complete');self.playback_text.set('Complete · last commanded pose held')
+                        self.performance_active=False;self.draw_preview_view()
                 elif kind=='closed':
                     if self.disconnecting:
                         self.disconnecting=False;self.connected=False;self.busy=False;self.state=None;self.power.set(False);self.connection.set('Offline · auto reconnect paused')

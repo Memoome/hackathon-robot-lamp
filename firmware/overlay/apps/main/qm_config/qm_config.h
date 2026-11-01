@@ -152,11 +152,11 @@ int qm_vsnprintf(char *str, size_t count, const char *fmt, va_list ap);
 #define CONFIG_QM_ALARM_SNOOZE_INTERVAL_MIN 5
 
 /* 调试命令行（QUMIOS CLI）：内核 qm_init 里自动 qm_cli_init()。
- * 输入输出走"调试通道"，这里绑定到与 ESP-IDF console 同一路 UART0(115200, TX=43/RX=44)。 */
+ * 输入输出走"调试通道"，这里绑定到与 ESP-IDF console 同一路 UART0(921600, TX=43/RX=44)。 */
 #define CONFIG_QM_CLI_SUPPORT 1
 #define CONFIG_QM_LOG_UART 1
 #define CONFIG_QM_DEBUG_UART_PORT 0
-#define CONFIG_QM_DEBUG_UART_BRAUDRATE 115200
+#define CONFIG_QM_DEBUG_UART_BRAUDRATE 921600
 #define CONFIG_QM_DEBUG_UART_TX_PIN 43
 #define CONFIG_QM_DEBUG_UART_RX_PIN 44
 

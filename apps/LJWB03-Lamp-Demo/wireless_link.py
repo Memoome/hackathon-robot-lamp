@@ -1,5 +1,5 @@
 """Local-network transport. Pairing keys stay in LOCALAPPDATA, outside the project."""
-import http.client,json,os,pathlib,socket,time
+import http.client,json,os,pathlib,socket,time,threading,queue,re
 SETTINGS=pathlib.Path(os.environ.get('LOCALAPPDATA',str(pathlib.Path.home())))/'LJWB03'/'wireless.json'
 def settings():
     try:return json.loads(SETTINGS.read_text(encoding='utf-8'))
@@ -42,11 +42,52 @@ class HttpSerial:
     def flush(self):pass
     def close(self):self.closed=True
 def open_connection(board_port,serial_module):
-    cfg=settings()
-    if cfg.get('enabled'):
-        host=cfg.get('host');found=discover(cfg.get('device'))
-        if found:host=next(iter(found.values()));cfg['host']=host;save(cfg)
-        if not host:raise RuntimeError('Lamp not found. Check Wi-Fi or open Wireless setup.')
+    """Race read-only USB and authenticated Wi-Fi probes; keep first valid lamp."""
+    cfg=settings();results=queue.Queue();done=threading.Event();lock=threading.Lock()
+    status=re.compile(rb'LIVE_STATUS version=1 session=\d+ gpio=12,10,11,15')
+    def probe(factory):
+        link=None
+        try:
+            label,link=factory()
+            with lock:
+                if done.is_set():link.close();return
+                done.set();results.put((label,link,None));link=None
+        except Exception as exc:results.put((None,None,str(exc)))
+        finally:
+            if link is not None:link.close()
+    def usb():
+        port=board_port();link=serial_module.Serial(port=None,baudrate=921600,timeout=.025,rtscts=False,dsrdtr=False)
+        try:
+            link.dtr=False;link.rts=False;link.port=port;link.open()
+            link.reset_input_buffer();link.write(b'arm_live status\r\n');link.flush()
+            raw=bytearray();until=time.monotonic()+1.5
+            while time.monotonic()<until and not done.is_set():
+                raw.extend(link.read(4096))
+                if status.search(raw):return port,link
+            raise RuntimeError('USB lamp did not reply')
+        except Exception:link.close();raise
+    def wifi(host):
+        if not host:raise RuntimeError('No saved Wi-Fi address')
+        raw=request(host,cfg['key'],'/command',b'arm_live status',timeout=.9)
+        if not status.search(raw):raise RuntimeError('Wi-Fi device did not return lamp status')
         return 'Wi-Fi '+host,HttpSerial(host,cfg['key'])
-    p=board_port();s=serial_module.Serial(port=None,baudrate=115200,timeout=.025,rtscts=False,dsrdtr=False)
-    s.dtr=False;s.rts=False;s.port=p;s.open();return p,s
+    def discovered():
+        found=discover(cfg.get('device'),timeout=.6)
+        for host in found.values():
+            if done.is_set():raise RuntimeError('Another connection won')
+            try:return wifi(host)
+            except Exception:continue
+        raise RuntimeError('No paired lamp found on Wi-Fi')
+    candidates=[usb]
+    if cfg.get('key'):
+        if cfg.get('host'):candidates.append(lambda:wifi(cfg['host']))
+        candidates.append(discovered)
+    for factory in candidates:threading.Thread(target=probe,args=(factory,),daemon=True).start()
+    errors=[];until=time.monotonic()+3
+    for _ in candidates:
+        try:label,link,error=results.get(timeout=max(.01,until-time.monotonic()))
+        except queue.Empty:break
+        if link is not None:return label,link
+        errors.append(error)
+    done.set()
+    raise RuntimeError('No lamp replied over USB or paired Wi-Fi. '+('; '.join(errors))[:300])

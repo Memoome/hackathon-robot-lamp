@@ -10,7 +10,7 @@ def usb_query(s,command,seconds=1):
     while time.monotonic()<end:raw.extend(s.read(4096))
     return bytes(raw)
 def usb_open():
-    s=serial.Serial(port=None,baudrate=115200,timeout=.03);s.dtr=False;s.rts=False;s.port=board_port();s.open();return s
+    s=serial.Serial(port=None,baudrate=921600,timeout=.03);s.dtr=False;s.rts=False;s.port=board_port();s.open();return s
 class Setup:
  def __init__(self,root):
     self.root=root;root.title('Lamp wireless setup');root.geometry('620x470');self.q=queue.Queue();self.cfg=w.settings()

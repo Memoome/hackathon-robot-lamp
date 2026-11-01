@@ -41,7 +41,7 @@ def find_board():
 
 
 def open_board(port):
-    s = serial.Serial(port=None, baudrate=115200, timeout=0.15, rtscts=False, dsrdtr=False, xonxoff=False)
+    s = serial.Serial(port=None, baudrate=921600, timeout=0.15, rtscts=False, dsrdtr=False, xonxoff=False)
     s.dtr = False
     s.rts = False
     s.port = port

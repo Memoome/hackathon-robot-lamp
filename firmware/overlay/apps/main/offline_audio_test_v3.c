@@ -264,7 +264,7 @@ void offline_audio_test_start(void)
     if(lamp_led_cli_init()!=QM_EOK){QM_LOGE(TAG,"ERROR LED CLI init");}
     network_setup_init();
     lamp_wireless_init();
-    QM_LOGI(TAG,"INIT PSRAM=%lu fixture_bytes=%lu fixture_fnv32=%08lx volume=%u UART0=115200",(unsigned long)PCM_CAPACITY,(unsigned long)fixture,(unsigned long)fnv32(offline_music_pcm_start,fixture),s_volume);
+    QM_LOGI(TAG,"INIT PSRAM=%lu fixture_bytes=%lu fixture_fnv32=%08lx volume=%u UART0=921600",(unsigned long)PCM_CAPACITY,(unsigned long)fixture,(unsigned long)fnv32(offline_music_pcm_start,fixture),s_volume);
 }
 
 void lamp_remote_audio(int argc,char **argv){command(NULL,0,argc,argv);}

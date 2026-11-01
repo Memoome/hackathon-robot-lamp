@@ -62,7 +62,7 @@ class LiveLink:
                 if kind=='connect':
                     if self.s:self.s.close()
                     self.session=None;port=board_port()
-                    self.s=serial.Serial(port=None,baudrate=115200,timeout=.025,rtscts=False,dsrdtr=False)
+                    self.s=serial.Serial(port=None,baudrate=921600,timeout=.025,rtscts=False,dsrdtr=False)
                     self.s.dtr=False;self.s.rts=False;self.s.port=port;self.s.open()
                     state=self.exchange('arm_live status');self.session=state['session']
                     if any(state['active']):raise RuntimeError('Outputs active. Close the earlier controller with the arm supported, then reconnect.')

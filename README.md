@@ -62,3 +62,11 @@ This repository is a portable reviewed export, not an automatic bidirectional mi
 ## Tests and provenance
 
 Run the Python scripts in `tests/` using the prepared Python environment. `test_lamp_led.py` also needs host GCC. Tests use simulated hardware, and do not prove loaded mechanics. See [THIRD-PARTY.md](THIRD-PARTY.md) for SDK, sound and hardware-document provenance. No blanket license is asserted over third-party material.
+
+## Latest software update · 31 October 2026
+
+USB runtime communication now uses **921600 baud** across the host tools and current firmware. Use **firmware/prebuilt/lamp-921600.bin** with its 921600-manifest.json checksum. The project board's installation and non-moving USB status reply were verified. Older prebuilt applications can use a different USB baud; do not mix them with these host defaults. The audio-module UART remains 2000000; Wi-Fi has no serial baud rate. Apply firmware/usb-baud.defaults to the vendor build settings when rebuilding; qm_config.h also carries the new debug baud.
+
+**Disable base rotation** is checked by default in Actions and the expanded preview. It excludes base movement from generated actions, custom routines and their robot playback, while preserving arm, light and sound behavior. Manual base controls remain available. Changing this option invalidates an existing preview plan; save an editable profile to retain the preference. The Actions shortcut/default tab and preview starting base direction were corrected. Connection/playback diagnostics and the live performance view are included in Studio.
+
+Camera capture now waits for the complete CAM_END transfer marker. Live camera operation is still unverified; this is not a claim that camera troubleshooting is finished. LJYD action integration remains pending; no proposed JSON action protocol has been implemented just by discussing it.
