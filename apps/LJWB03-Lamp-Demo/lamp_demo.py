@@ -173,13 +173,18 @@ class LampLink(DemoLink):
         ending=1 if cfg['style']=='Robot chirps' else 3
         self.start_sound(ending,cfg['volume']);self.finish_sound(ending)
         self.emit('finished','Stretch complete. Upright pose holding. No camera detection was used.')
+    def idle(self):
+        """Optional background work, only while no action is executing."""
+        pass
     def worker(self):
         while True:
             kind=None
             try:
                 try:kind,data=self.jobs.get(timeout=.2)
                 except queue.Empty:
-                    if self.s and time.monotonic()-self.ui_alive<.8:self.exchange('arm_live ping')
+                    if self.s and time.monotonic()-self.ui_alive<.8:
+                        self.exchange('arm_live ping')
+                        self.idle()
                     continue
                 if kind=='connect':
                     if self.s:self.s.close()
