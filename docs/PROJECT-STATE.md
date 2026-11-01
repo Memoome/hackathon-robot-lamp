@@ -1,5 +1,30 @@
 # Shared project state · 31 October 2026
 
+## Boot return-to-rest source update · 1 November 2026
+
+The lamp offline-audio firmware startup now turns the LED ring off, then applies
+`return_rest.action.json` targets once: lift 1000, elbow 1682, head 1101,
+SG90 position base 1500 microseconds. `tools/export_boot_rest.py` generates the
+checked-in target header and package hash. Re-export and rebuild after changing
+the package. This is a fixed startup target, not a general JSON action player.
+
+Initial physical angles are unknown. Startup directly enables target PWM;
+there is no claim of a smooth initial trajectory or measured homing. It holds
+these commands locally without a PC lease until an explicit host command takes
+over. Status/ping do not re-trigger or take ownership. Studio can claim a marked,
+stationary boot-held pose without moving it, then the existing five-second host
+watchdog applies. Other active outputs are still rejected. OFF releases; STOP
+freezes and enters host-controlled holding. Neither restarts boot return.
+
+Runs once per application boot, including reset/OTA restart, only after startup
+initialization succeeds. Any target write failure releases all outputs and is
+not automatically retried. Initialization or LED-off failure skips return.
+The separate vision firmware is unchanged. Existing prebuilt binaries are unchanged.
+Host tests compile and execute the actual startup function with injected PWM
+failures and check generated targets against JSON. Full vendor firmware build,
+flashing, loaded mechanics and power-on acceptance remain unverified.
+
+
 The current portable Studio includes Wi-Fi/USB transport, paired local discovery, explicit firmware updates, position-base control, visual calibration, locked final draft, live dragging and expanded animated previews. Lift12=MG996R, elbow10=MG90S, head11=SG90, current base15=SG90 position, ring1=8 WS2812 LEDs. Earlier continuous-base tools remain historical references.
 
 Five stock actions are available: Slump, Water, Stretch, Sad and Happy. Arm/base movement, sound and lighting share the preview/playback plan. Water uses a configured bottle location. Software geometry is not physical feedback. Calibration and locked profiles were preserved.

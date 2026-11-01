@@ -208,5 +208,18 @@
     }
   ],
   "category": "basic",
-  "behavior_note": "Reference-pose primitive, not a relative gesture at an arbitrary current pose. First row moves arm to configured Rest. Head-only primitives leave base unchanged. Directions and amplitudes are model estimates; physical calibration remains unconfirmed."
+  "behavior_note": "Reference-pose primitive, not a relative gesture at an arbitrary current pose. First row moves arm to configured Rest. Head-only primitives leave base unchanged. Directions and amplitudes are model estimates; physical calibration remains unconfirmed.",
+  "boot_execution": {
+    "enabled": true,
+    "firmware": "lamp offline-audio application overlay",
+    "trigger": "once per application boot, including software/OTA restart",
+    "target_mode": "compile_time_export_via_tools/export_boot_rest.py",
+    "startup_lights": "off",
+    "initial_position": "unknown_no_encoder_feedback",
+    "engagement": "direct_target_pwm_no_claim_of_ramped_initial_motion",
+    "completion": "target_commands_applied_not_measured_arrival",
+    "holding": "board_owned_until_explicit_host_claim_or_stop",
+    "requires_rebuild_and_flash": true,
+    "hardware_validated": false
+  }
 }

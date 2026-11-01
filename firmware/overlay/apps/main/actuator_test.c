@@ -18,6 +18,7 @@
 #include "freertos/semphr.h"
 #include <stdint.h>
 #include "esp_random.h"
+#include "boot_rest_target.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,6 +34,7 @@ static int64_t motor_deadline;
 static int motor_initialized;
 static int ready;
 static int updating;
+static int boot_rest_attempted,boot_rest_owned;
 static int angles[3]={-1,-1,-1};
 static int64_t arm_lease;
 static uint32_t arm_session;
@@ -57,7 +59,7 @@ static void release_all_locked(void)
     base_spinning=0;base_stop_until=0;
     if (motor_initialized) ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_6,0);
     motor_deadline=0;
-    arm_lease=0;
+    arm_lease=0;boot_rest_owned=0;
     for(int i=0;i<3;i++) angles[i]=-1;
 }
 
@@ -81,6 +83,7 @@ static void command(char *out, int out_len, int argc, char **argv)
     (void)out; (void)out_len;
     if (!ready) { QM_LOGW(TAG, "ACT_ERROR not_ready"); return; }
     xSemaphoreTake(lock, portMAX_DELAY);
+    if(argc>=2 && strcmp(argv[1],"status"))boot_rest_owned=0;
     if (argc==2 && !strcmp(argv[1],"status")) {
         status_locked();
     } else if (argc==2 && !strcmp(argv[1],"stop")) {
@@ -128,7 +131,8 @@ static void command(char *out, int out_len, int argc, char **argv)
 }
 
 
-/* Arm signals are off at boot. Angles are command estimates, never feedback.
+/* Initialization releases outputs; the explicit startup hook applies boot Rest.
+ * Angles are command estimates, never feedback.
  * 1000..2000us is a conservative initial scale; UI limits default to 60..120.
  * A 5-second host lease bounds holding if the PC disappears. */
 static void arm_status(void)
@@ -142,6 +146,7 @@ static void arm_command(char *out,int out_len,int argc,char **argv)
     (void)out;(void)out_len;
     if(!ready){QM_LOGW(TAG,"ARM_ERROR not_ready");return;}
     xSemaphoreTake(lock,portMAX_DELAY);
+    if(argc>=2 && strcmp(argv[1],"status") && strcmp(argv[1],"ping"))boot_rest_owned=0;
     if(argc==2 && !strcmp(argv[1],"status")) arm_status();
     else if(argc==2 && !strcmp(argv[1],"stop")) {
         release_all_locked(); QM_LOGI(TAG,"ARM_OK stop signals=OFF");
@@ -184,6 +189,34 @@ static esp_err_t live_write(int i,unsigned pulse)
     if(err==ESP_OK)live_pulse[i]=pulse;
     return err;
 }
+/* One startup target command, not measured homing or a generic JSON player.
+ * No initial-position feedback exists, so initial engagement cannot be ramped. */
+esp_err_t lamp_boot_return_rest(void)
+{
+    if(!ready)return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    if(boot_rest_attempted || updating){xSemaphoreGive(lock);return ESP_ERR_INVALID_STATE;}
+    boot_rest_attempted=1;
+    for(int i=0;i<4;i++){
+        if(deadlines[i] || lamp_boot_rest_pulse[i]<500 || lamp_boot_rest_pulse[i]>2500){
+            xSemaphoreGive(lock);return ESP_ERR_INVALID_STATE;
+        }
+    }
+    esp_err_t err=ESP_OK;
+    for(int i=0;i<4;i++){
+        err=live_write(i,lamp_boot_rest_pulse[i]);
+        if(err!=ESP_OK){release_all_locked();break;}
+        live_dir[i]=0;live_motion_until[i]=0;live_fraction[i]=0;
+        live_hold[i]=1;deadlines[i]=-1;
+    }
+    if(err==ESP_OK){
+        base_spinning=0;base_stop_until=0;arm_lease=0;boot_rest_owned=1;
+        QM_LOGI(TAG,"BOOT_REST target_applied=1 measured_arrival=unknown package=%s",LAMP_BOOT_REST_PACKAGE_SHA256);
+    }else QM_LOGE(TAG,"BOOT_REST failed rc=%d outputs=OFF",err);
+    xSemaphoreGive(lock);
+    return err;
+}
+
 static void live_freeze(int64_t now)
 {
     for(int i=0;i<4;i++){
@@ -197,10 +230,10 @@ static void live_freeze(int64_t now)
 }
 static void live_status(void)
 {
-    QM_LOGI(TAG,"LIVE_STATUS version=1 session=%lu gpio=12,10,11,15 pulse=%u,%u,%u,%u active=%d,%d,%d,%d moving=%d,%d,%d,%d base_spin=%d lease=%d",
+    QM_LOGI(TAG,"LIVE_STATUS version=1 session=%lu gpio=12,10,11,15 pulse=%u,%u,%u,%u active=%d,%d,%d,%d moving=%d,%d,%d,%d base_spin=%d lease=%d boot_rest=%d",
         (unsigned long)arm_session,live_pulse[0],live_pulse[1],live_pulse[2],live_pulse[3],
         deadlines[0]!=0,deadlines[1]!=0,deadlines[2]!=0,deadlines[3]!=0,
-        live_dir[0]!=0,live_dir[1]!=0,live_dir[2]!=0,live_dir[3]!=0,base_spinning,arm_lease!=0);
+        live_dir[0]!=0,live_dir[1]!=0,live_dir[2]!=0,live_dir[3]!=0,base_spinning,arm_lease!=0,boot_rest_owned);
 }
 static int live_index(unsigned pin){return pin==12?0:pin==10?1:pin==11?2:pin==15?3:-1;}
 
@@ -226,10 +259,16 @@ static void live_command(char *out,int out_len,int argc,char **argv)
     if(!ready){QM_LOGW(TAG,"LIVE_ERROR not_ready");return;}
     xSemaphoreTake(lock,portMAX_DELAY);
     if(updating){xSemaphoreGive(lock);lamp_reply("LIVE_ERROR updating");return;}
+    /* An explicit host command takes ownership; reads and pings do not. */
+    if(boot_rest_owned && argc>=2 && strcmp(argv[1],"status") && strcmp(argv[1],"ping")){
+        boot_rest_owned=0;arm_lease=esp_timer_get_time()+5000000;
+    }
     unsigned pin,pulse,mode,direction,speed,lo,hi,neutral;
     int64_t now=esp_timer_get_time();
     if(argc==2 && !strcmp(argv[1],"status"))live_status();
-    else if(argc==2 && !strcmp(argv[1],"ping")){
+    else if(argc==2 && !strcmp(argv[1],"claim")){
+        if(arm_lease){arm_lease=now+5000000;}live_status();
+    } else if(argc==2 && !strcmp(argv[1],"ping")){
         if(arm_lease){arm_lease=now+5000000;}live_status();
     } else if(argc==2 && !strcmp(argv[1],"freeze")){
         live_freeze(now);if(arm_lease)arm_lease=now+5000000;live_status();

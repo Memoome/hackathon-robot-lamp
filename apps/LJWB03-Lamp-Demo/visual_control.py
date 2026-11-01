@@ -1381,7 +1381,7 @@ class App:
                 elif kind=='connected':
                     self.connected=True;self.busy=False;self.count=data[1];self.retry_count=0;self.connection.set(f'{data[0]} · {self.count} sounds ready')
                     self.power.set(True)
-                    self.live_enabled.set(False);self.status.set('Connected. Movement will not resume automatically; engage the supported lamp when ready.')
+                    self.live_enabled.set(False);self.status.set('Connected. Boot-held Rest may be claimed without movement; otherwise engage the supported lamp. Interrupted actions are not resumed.')
                 elif kind=='state':
                     self.state=data;self.draw()
                     for i,label in enumerate(self.test_states):

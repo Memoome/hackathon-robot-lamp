@@ -1,5 +1,7 @@
 # Lamp diagnostic firmware
 
+**Branch source update (1 November):** new builds of the offline-audio lamp application now automatically apply the packaged Rest targets at boot and hold them. This includes software/OTA reboots. Initial position is unknown, so first engagement is direct PWM, not guaranteed smooth motion. Existing prebuilt binaries do not contain this change. See `docs/PROJECT-STATE.md` for ownership, tests and deployment limits. Regenerate `boot_rest_target.h` using `python3 tools/export_boot_rest.py` from the repository root after changing `actions/return_rest.action.json`.
+
 `overlay/` contains project application changes relative to the organizer's WB03 SDK root (with apps/ and qumios-dev/). Obtain that compatible SDK and ESP-IDF 5.4.1 separately. This overlay is not a standalone SDK distribution.
 
 Apply to a separate working copy:

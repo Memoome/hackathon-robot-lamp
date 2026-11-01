@@ -190,8 +190,11 @@ class LampLink(DemoLink):
                     if self.s:self.s.close()
                     self.session=None;from wireless_link import open_connection
                     p,self.s=open_connection(board_port,serial)
-                    self.exchange('arm_live status');self.session=self.state['session']
-                    if any(self.state['active']):raise RuntimeError('Earlier outputs are active. Support/release the lamp using the earlier controller first.')
+                    raw=self.exchange('arm_live status');self.session=self.state['session']
+                    if any(self.state['active']):
+                        if re.search(rb'\bboot_rest=1\b',raw) and self.state['active']==[1,1,1,1] and not self.state['base_spin'] and not any(self.state['moving']):
+                            self.exchange('arm_live claim')
+                        else:raise RuntimeError('Earlier outputs are active. Support/release the lamp using the earlier controller first.')
                     raw=self.exchange('audio_test status',rb'STATUS mode=OFFLINE_PCM')
                     count=re.search(rb'emotion_count=(\d+)',raw)
                     self.emit('connected',(p,int(count[1]) if count else 4 if re.search(EMOTION,raw) else 0))
