@@ -33,7 +33,7 @@ Wi-Fi discovery/status, paired control and same-image OTA/rejoin were verified o
 
 **LJYD voice conversation/action integration remains separate work.** Local Wi-Fi control is not cloud authentication. The SDK contains voice/agent modules, but the diagnostic does not establish a working live cloud conversation. Named cloud actions still need explicit mapping to the lamp controller. Public source requires each developer's own product configuration; no shared product secret is supplied.
 
-The separate `pose/` starter is an ESP-DL static-image benchmark, not a finished concurrent posture pipeline. The teammate's live-vision work still needs end-to-end integration and performance verification. MPU6050 is not assigned in the lamp and is not a servo encoder.
+Vision remains a separate application from lamp motion/voice. `pose/benchmark` contains the static-image benchmark; [pose/live](pose/live/README.md) contains BF3901 capture, on-board pedestrian detection and presence decisions, automatic JPEG transfer, PC-side YOLO26 pose/posture processing, and the local web viewer. See [the current vision architecture and acceptance status](docs/VISION-POSE-ARCHITECTURE.md). The older on-board YOLO11n-Pose image is a historical reference, not the current pipeline. Scene accuracy and concurrent integration with lamp motion/voice remain unverified. MPU6050 is not assigned in the lamp and is not a servo encoder.
 
 ## Where everything lives
 
@@ -48,7 +48,8 @@ The separate `pose/` starter is an ESP-DL static-image benchmark, not a finished
 | `firmware/overlay/` | Application overlay for the organizer's compatible SDK |
 | `firmware/prebuilt/` | Application-only builds and checksums |
 | `hardware/` | Lamp STL and supplied reference documents |
-| `pose/` | Separate vision benchmark starter |
+| `pose/` | Static benchmark and separate board-detection / PC-pose pipeline |
+| `docs/VISION-POSE-ARCHITECTURE.md` | Current vision architecture, protocol and acceptance status |
 | `tests/` | Simulated hardware and protocol checks |
 
 Older controller tools assume their original hardware modes. Use Studio for the current position base. See [Studio guide](apps/LJWB03-Lamp-Demo/VISUAL-STUDIO.md); newest sections come first and supersede historical behavior below them.

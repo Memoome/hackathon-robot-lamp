@@ -1,0 +1,1 @@
+idf_component_register(SRCS "camera_main.c" "detect_engine.cpp" "presence.c" INCLUDE_DIRS "." REQUIRES pedestrian_detect esp_new_jpeg esp_video esp_cam_sensor esp_driver_gpio esp_driver_spi esp_driver_uart esp_timer esp_psram)

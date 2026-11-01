@@ -1,0 +1,17 @@
+--- a/esp_cam_sensor/sensors/bf3901/bf3901.c
++++ b/esp_cam_sensor/sensors/bf3901/bf3901.c
+@@ -518,6 +518,14 @@
+         return ret;
+     }
+     id->pid = (pid_h << 8) | pid_l;
++    ESP_LOGI(TAG, "ID_SAMPLE n=0 pid=0x%04x", id->pid);
++    for (int n = 1; n < 10; n++) {
++        delay_ms(20);
++        uint8_t hi = 0, lo = 0;
++        esp_err_t rh = bf3901_read(dev->sccb_handle, BF3901_REG_CHIP_ID_H, &hi);
++        esp_err_t rl = bf3901_read(dev->sccb_handle, BF3901_REG_CHIP_ID_L, &lo);
++        ESP_LOGI(TAG, "ID_SAMPLE n=%d pid=0x%04x high_rc=%d low_rc=%d", n, (hi << 8) | lo, rh, rl);
++    }
+ 
+     return ret;
+ }

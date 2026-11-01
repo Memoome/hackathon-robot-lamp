@@ -1,0 +1,86 @@
+--- a/esp_cam_sensor/src/driver_cam/esp_cam_ctlr_spi_cam.c
++++ b/esp_cam_sensor/src/driver_cam/esp_cam_ctlr_spi_cam.c
+@@ -234,6 +234,24 @@
+ {
+     esp_cam_ctlr_spi_cam_t *ctlr = (esp_cam_ctlr_spi_cam_t *)spi_trans->user;
+ 
++    /* Bounded ISR sampling only; print in task context after stream stop. */
++    if (ctlr->fsm == ESP_CAM_CTLR_SPI_CAM_FSM_STARTED) {
++        uint32_t n = ctlr->diag_count;
++        if (spi_trans->trans_len < spi_trans->length) ctlr->diag_short++;
++        if (!spi_trans->trans_len) ctlr->diag_zero++;
++        if (n < 8) {
++            const uint8_t *raw = spi_trans->rx_buffer;
++            ctlr->diag_samples[n][0] = spi_trans->trans_len;
++            ctlr->diag_samples[n][1] = spi_trans->length;
++            if (raw && spi_trans->length >= 64) {
++                for (int k = 0; k < 2; ++k) {
++                    ctlr->diag_samples[n][2+k] = ((uint32_t)raw[k*4]<<24) |
++                        ((uint32_t)raw[k*4+1]<<16) | ((uint32_t)raw[k*4+2]<<8) | raw[k*4+3];
++                }
++            }
++        }
++        ctlr->diag_count = n + 1;
++    }
+     spi_cam_receive_done(ctlr, spi_trans->rx_buffer, spi_trans->length / 8);
+ 
+     setup_trans_buffer(ctlr, spi_trans);
+@@ -582,8 +600,10 @@
+ static esp_err_t spi_cam_decode(esp_cam_ctlr_spi_cam_t *ctlr, uint8_t *src, uint8_t *dst, uint32_t *decoded_size)
+ {
+     bool decode_check_dis = ctlr->decode_check_dis;
++    ctlr->diag_decode_count++;
+ 
+     if (!decode_check_dis && (memcmp(src, ctlr->frame_info->frame_header_check, ctlr->frame_info->frame_header_check_size) != 0)) {
++        ctlr->diag_frame_bad++;
+         ESP_LOGD(TAG, "invalid frame header: %x %x %x %x", src[0], src[1], src[2], src[3]);
+         return ESP_FAIL;
+     }
+@@ -593,6 +613,7 @@
+ 
+     for (uint32_t i = 0; i < ctlr->fb_lines; i++) {
+         if (!decode_check_dis && (memcmp(src, ctlr->frame_info->line_header_check, ctlr->frame_info->line_header_check_size) != 0)) {
++            ctlr->diag_line_bad++;
+             ESP_LOGD(TAG, "invalid line header %" PRIu32 "", i);
+             return ESP_FAIL;
+         }
+@@ -751,6 +772,9 @@
+     ESP_RETURN_ON_FALSE(ctlr, ESP_ERR_INVALID_ARG, TAG, "invalid argument: handle is null");
+     ESP_RETURN_ON_FALSE(ctlr->fsm == ESP_CAM_CTLR_SPI_CAM_FSM_ENABLED, ESP_ERR_INVALID_STATE, TAG, "processor isn't in enabled state");
+ 
++    ctlr->diag_count = ctlr->diag_short = ctlr->diag_zero = 0;
++    ctlr->diag_decode_count = ctlr->diag_frame_bad = ctlr->diag_line_bad = 0;
++    memset(ctlr->diag_samples, 0, sizeof(ctlr->diag_samples));
+     ctlr->dropped_frame_count = 0;
+     setup_trans_buffer(ctlr, &ctlr->spi_trans);
+     if (ctlr->intf == ESP_CAM_CTLR_SPI_CAM_INTF_SPI) {
+@@ -792,6 +816,17 @@
+     /* SPI slave does not support stop function */
+ 
+     ctlr->fsm = ESP_CAM_CTLR_SPI_CAM_FSM_ENABLED;
++    ESP_LOGI(TAG, "SPI_RAW_SUMMARY callbacks=%lu short=%lu zero=%lu decoded=%lu frame_header_bad=%lu line_header_bad=%lu expected_bytes=%lu",
++             (unsigned long)ctlr->diag_count, (unsigned long)ctlr->diag_short,
++             (unsigned long)ctlr->diag_zero, (unsigned long)ctlr->diag_decode_count,
++             (unsigned long)ctlr->diag_frame_bad, (unsigned long)ctlr->diag_line_bad,
++             (unsigned long)ctlr->fb_size_in_bytes);
++    for (unsigned i = 0; i < ctlr->diag_count && i < 8; ++i) {
++        ESP_LOGI(TAG, "SPI_RAW_SAMPLE i=%u actual_bits=%lu requested_bits=%lu raw_head=%08lx%08lx",
++                 i, (unsigned long)ctlr->diag_samples[i][0], (unsigned long)ctlr->diag_samples[i][1],
++                 (unsigned long)ctlr->diag_samples[i][2], (unsigned long)ctlr->diag_samples[i][3]);
++    }
++
+ 
+     return ESP_OK;
+ }
+--- a/esp_cam_sensor/src/driver_cam/esp_cam_ctlr_spi_cam.h
++++ b/esp_cam_sensor/src/driver_cam/esp_cam_ctlr_spi_cam.h
+@@ -43,6 +43,9 @@
+ 
+ typedef struct esp_cam_ctlr_spi_cam {
+     esp_cam_ctlr_t base;                                /*!< Camera controller base object data */
++    volatile uint32_t diag_count, diag_short, diag_zero;
++    uint32_t diag_samples[8][4]; /* actual bits, requested bits, first two raw words */
++    uint32_t diag_decode_count, diag_frame_bad, diag_line_bad;
+     esp_cam_ctlr_evt_cbs_t cbs;                         /*!< Camera controller callback functions */
+     void *cbs_user_data;                                /*!< Camera controller callback private data */
+ 

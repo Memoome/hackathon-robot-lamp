@@ -1,4 +1,19 @@
-# On-board pose starter
+# Pose projects
+
+The original static-image benchmark is retained below. The separate
+[live camera/YOLO application](live/README.md) adds BF3901 capture, on-board
+YOLO11n-Pose, a portable Python viewer and experimental calibrated front-view
+posture cues. Launch its desktop UI with `live/launch_pose.cmd` after installing
+the repository's Python dependencies. It requires compatible live-pose firmware;
+the lamp application and static benchmark use different protocols.
+
+The live project includes source, hardware-free tests and the historical
+application binary with checksum. Model weights and third-party SDK sources
+are obtained separately from their original sources. Neither pose project
+runs concurrently with the lamp firmware. Do not flash merely to inspect code.
+See `live/prebuilt/README.md` for the original image's compatibility boundaries.
+
+## Original on-board static-image starter
 
 This is a built static-image ESP32-S3 benchmark, not a finished live posture detector. The friend owns camera/inference integration. Do not flash this over the lamp firmware without backing up the current application and verifying model compatibility.
 
