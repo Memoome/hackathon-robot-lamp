@@ -199,6 +199,7 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(live,'ROOT',Path(tmp)),patch.object(live.wire,'connect',return_value=s):
             live.stream_session(stop,emit,preview_every=10)
         self.assertLess(s.sent.index(b'cam_test preview 10\n'),s.sent.index(b'cam_test stream_start\n'))
+        self.assertLess(s.sent.index(b'cam_test sit_limits 10 10\n'),s.sent.index(b'cam_test stream_start\n'))
         with self.assertRaises(ValueError):live.stream_session(stop,emit,preview_every=-1)
     def test_rotation_preserves_geometry(self):
         raw=bytes([255,0,0,0,255,0])

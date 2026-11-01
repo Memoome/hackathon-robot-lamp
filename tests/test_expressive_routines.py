@@ -49,8 +49,9 @@ class Fake(v.VisualLink):
         self.check();self.calls.append(cmd);assert len(cmd.split())<=8
         if cmd=='lamp_led status':return b'LED_STATUS gpio=1 r=26 g=21 b=15'
         if cmd.startswith('lamp_led set '):return b'LED_STATUS gpio=1 r=1 g=1 b=1'
-        if cmd.startswith('arm_live jog 15 '):
-            args=cmd.split();self.state['pulse'][3]=int(args[6]) if int(args[3]) else int(args[5])
+        if cmd.startswith('arm_live target 15 '):
+            args=cmd.split();assert 500<=int(args[3])<=2500 and 10<=int(args[4])<=600
+            self.state['pulse'][3]=int(args[3])
         if cmd.startswith('arm_live glide '):self.state['pulse'][:3]=list(map(int,cmd.split()[2:5]))
     def wait_until(self,deadline):clock[0]=deadline;self.check()
     def glide(self,goal,seconds,cfg):self.check();self.state['pulse'][:3]=goal.copy()
@@ -62,7 +63,7 @@ try:
     for kind in ('Slump','Water','Stretch'):
         f=Fake();rows=e.build_gesture(p,p['roles'],kind);f.perform('slump',(rows,p['config'],10))
         assert f.state['pulse'][:3]==home and any(isinstance(c,tuple) and c[0]=='sound' for c in f.calls)
-        if kind!='Slump':assert any(c.startswith('arm_live jog 15 ') for c in f.calls if isinstance(c,str))
+        if kind!='Slump':assert any(c.startswith('arm_live target 15 ') for c in f.calls if isinstance(c,str))
         else:assert [c for c in f.calls if isinstance(c,tuple) and c[0]=='sound']==[('sound',1)]
 finally:v.time.monotonic=old
 print('PASS: all gestures/styles return home; model slump lowers and stretch rises; quintic no-overshoot/rate caps; same hardware sampler; sound ordering; calibration/checkpoints unchanged.')

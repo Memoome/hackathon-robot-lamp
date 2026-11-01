@@ -434,8 +434,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, self.server.camera.posture_status())
         if path == '/api/presence':
             st = self.server.camera.status()
+            pose = st.get('pc_pose') or {}
             return self.reply(200, dict(presence=st['presence'], calib=st['presence_calib'],
-                                        events=st['presence_events'], active=st['active']))
+                                        events=st['presence_events'], active=st['active'],
+                                        pc_pose={k: pose[k] for k in ('updated', 'seq', 'posture') if k in pose}))
         if path in ('/frame.png', '/snapshot.png'):
             image, mime = self.server.camera.image()
             if image is None:

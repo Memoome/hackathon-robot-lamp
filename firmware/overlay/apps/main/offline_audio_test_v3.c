@@ -252,7 +252,7 @@ static void worker(void *arg)
 void offline_audio_test_start(void)
 {
     qm_audio_device_config_t config={0};TaskHandle_t task;
-    QM_LOGI(TAG,"BOOT mode=OFFLINE_PCM revision=bebdc802 test=3 NETWORK_SETUP_EXPLICIT NO_POSE ACTUATORS_COMMAND_ONLY NO_BOOT_SOUND NO_AUTORECORD NO_AUTOPLAY DUPLEX_FIXTURE EXPORT VOLUME");
+    QM_LOGI(TAG,"BOOT mode=OFFLINE_PCM revision=bebdc802 test=3 NETWORK_SETUP_EXPLICIT NO_POSE ACTUATORS_BOOT_RETURN_REST NO_BOOT_SOUND NO_AUTORECORD NO_AUTOPLAY DUPLEX_FIXTURE EXPORT VOLUME");
     uint32_t fixture=(uint32_t)(offline_music_pcm_end-offline_music_pcm_start);if(fixture!=256000u||fixture%FRAME_BYTES){QM_LOGE(TAG,"ERROR fixture length");return;}
     s_pcm=heap_caps_malloc(PCM_CAPACITY,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);s_commands=xQueueCreate(1,sizeof(int));s_sender_done=xSemaphoreCreateBinary();
     if(!s_pcm||!s_commands||!s_sender_done||qm_work_on_init()!=QM_EOK){QM_LOGE(TAG,"ERROR allocation/init");return;}
@@ -261,7 +261,9 @@ void offline_audio_test_start(void)
     if(actuator_test_init()!=ESP_OK){QM_LOGE(TAG,"ERROR actuator init; outputs remain off");return;}
     if(camera_test_init()!=ESP_OK){QM_LOGE(TAG,"ERROR camera CLI init");return;}
     if(xTaskCreate(worker,"offline_audio",8192,NULL,8,&task)!=pdPASS){QM_LOGE(TAG,"ERROR worker allocation");return;}
-    if(lamp_led_cli_init()!=QM_EOK){QM_LOGE(TAG,"ERROR LED CLI init");}
+    if(lamp_led_cli_init()!=QM_EOK){QM_LOGE(TAG,"ERROR LED CLI init");return;}
+    if(lamp_led_boot_off()!=QM_EOK){QM_LOGE(TAG,"ERROR boot light off; skipping boot rest");return;}
+    if(lamp_boot_return_rest()!=ESP_OK){QM_LOGE(TAG,"ERROR boot rest; no automatic retry");return;}
     network_setup_init();
     lamp_wireless_init();
     QM_LOGI(TAG,"INIT PSRAM=%lu fixture_bytes=%lu fixture_fnv32=%08lx volume=%u UART0=921600",(unsigned long)PCM_CAPACITY,(unsigned long)fixture,(unsigned long)fnv32(offline_music_pcm_start,fixture),s_volume);

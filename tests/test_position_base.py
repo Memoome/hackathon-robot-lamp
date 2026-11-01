@@ -13,10 +13,10 @@ class Fake(v.VisualLink):
         self.emit=lambda *a:None
     def exchange(self,cmd,*args):
         self.calls.append(cmd)
-        if cmd.startswith('arm_live jog'):
-            _,_,pin,direction,speed,lo,hi,hold=cmd.split()
-            assert pin=='15' and hold=='1' and 10<=int(speed)<=600
-            self.state['pulse'][3]=int(hi) if int(direction) else int(lo)
+        if cmd.startswith('arm_live target'):
+            _,_,pin,target,speed=cmd.split()
+            assert pin=='15' and 500<=int(target)<=2500 and 10<=int(speed)<=600
+            self.state['pulse'][3]=int(target)
         if cmd.startswith('arm_live engage'):self.state['pulse'][3]=int(cmd.split()[3])
     def wait_until(self,*args):pass
 f=Fake();f.position_base(row);assert f.state['pulse']==[1200,1300,1400,500] and f.calls[-1]=='arm_live freeze'
@@ -28,7 +28,7 @@ f=Fake();f.state['active'][3]=0
 try:f.position_base(row);raise AssertionError('unarmed base moved')
 except ValueError:assert f.calls==['arm_live status']
 f=Fake();f.position_base(dict(row,pulse=1500),True);assert f.calls[-1]=='arm_live engage 15 1500 1'
-root=v.tk.Tk();root.withdraw();app=v.App(root);app.auto_connect.set(False)
+root=v.tk.Tk();root.withdraw();app=v.App(root);app.auto_connect.set(False);app.disable_action_base.set(False)
 root.update();original=copy.deepcopy(app.p['calibration'])
 project=v.fresh();project['routine']=[row];v.check_project(project)
 for pulse in (499,2501):

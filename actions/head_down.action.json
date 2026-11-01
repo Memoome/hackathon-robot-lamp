@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "action_id": "head_down",
+  "action_version": "0.1.0",
+  "name": "低头并保持",
+  "created_date": "2026-11-01",
+  "status": "generated_not_hardware_validated",
+  "source": {
+    "profile": "apps/LJWB03-Lamp-Demo/visual-lamp.json",
+    "profile_sha256": "41c562af88a4e624b0d46d1caaea7a1fd25f03a60b8aad3be6b3eb2dfeaee6c9",
+    "generator": "apps/LJWB03-Lamp-Demo/basic_routines.py",
+    "generator_sha256": "ce82501cde7d5da2895accbeec27ada8ee8863de5a8e6f447e6b2d377683aa9e",
+    "entry_point": "build_basic",
+    "arguments": {
+      "kind": "head_down"
+    },
+    "helper_generator": "apps/LJWB03-Lamp-Demo/expressive_routines.py",
+    "helper_generator_sha256": "4d9920f07f3a101801b4b39835870a1042fae8eb575161e7cfac8e21aed992ec"
+  },
+  "device_configuration": {
+    "profile_name": "Lamp Cardboard Prototype",
+    "roles": {
+      "Rest": "Reviewed Left Rest",
+      "Slump": "Starter Slump",
+      "Water": "Starter Water",
+      "Stretch": "Starter Stretch"
+    },
+    "poses": {
+      "Starter Rest": [
+        1000,
+        600,
+        1500
+      ],
+      "Starter Slump": [
+        1100,
+        800,
+        1450
+      ],
+      "Starter Water": [
+        1050,
+        750,
+        1400
+      ],
+      "Starter Stretch": [
+        950,
+        550,
+        1600
+      ],
+      "Reviewed Left Rest": [
+        1000,
+        1682,
+        1101
+      ]
+    },
+    "calibration": [
+      [
+        [
+          500,
+          88.40885972880541
+        ],
+        [
+          2500,
+          -91.59114027119459
+        ]
+      ],
+      [
+        [
+          500,
+          88.35360965866619
+        ],
+        [
+          2500,
+          -91.64639034133381
+        ]
+      ],
+      [
+        [
+          500,
+          113.65460784506683
+        ],
+        [
+          2500,
+          -66.34539215493317
+        ]
+      ]
+    ],
+    "calibrated": [
+      false,
+      false,
+      false
+    ],
+    "link_lengths": [
+      150,
+      150,
+      65
+    ],
+    "base_position": {
+      "preview": 1099,
+      "reverse": true,
+      "front": 90.0,
+      "water_angle": 180.0
+    },
+    "joints": [
+      {
+        "name": "lift",
+        "gpio": 12,
+        "servo": "MG996R",
+        "mode": "position",
+        "pulse_min_us": 500,
+        "pulse_max_us": 2500
+      },
+      {
+        "name": "elbow",
+        "gpio": 10,
+        "servo": "MG90S",
+        "mode": "position",
+        "pulse_min_us": 500,
+        "pulse_max_us": 2500
+      },
+      {
+        "name": "head",
+        "gpio": 11,
+        "servo": "SG90",
+        "mode": "position",
+        "pulse_min_us": 500,
+        "pulse_max_us": 2500
+      },
+      {
+        "name": "base",
+        "gpio": 15,
+        "servo": "SG90",
+        "mode": "position",
+        "pulse_min_us": 500,
+        "pulse_max_us": 2500
+      }
+    ]
+  },
+  "requirements": {
+    "all_four_joints_engaged": true,
+    "base_spin": false,
+    "led_command_support": false,
+    "required_sound_slots": 0,
+    "firmware_action_package_loader_implemented": false,
+    "calibration_and_clearance_require_physical_validation": true
+  },
+  "execution": {
+    "max_speed_us_per_s": 300,
+    "base_max_speed_us_per_s": 600,
+    "volume_percent": 0,
+    "sound_style": "silent",
+    "pulse_order": [
+      "lift",
+      "elbow",
+      "head"
+    ],
+    "pulse_unit": "microseconds",
+    "time_unit": "seconds",
+    "row_fields_match_existing_generator": true,
+    "duration_rule": "Apply coordinated_row from current commanded arm/base pulses, then trajectory_duration; seconds is a minimum, not a fixed duration.",
+    "arm_interpolation": "u=clamp((elapsed/duration-delay)/(1-delay),0,1); eased=u^3*(10-15*u+6*u^2)",
+    "base_interpolation": "Concurrent position command at capped speed; wait for commanded completion before next row.",
+    "pause_rule": "Pause after movement.",
+    "sound_rule": "sound=-1 means no new sound; otherwise await pending sound before starting this sound at movement start; await final pending sound before completion.",
+    "light_rule": "No light fields: preserve externally managed lighting.",
+    "cancel_rule": "Cancel remaining movement, sound and light updates; do not automatically return home.",
+    "completion_rule": "Command sequence complete, not measured mechanical arrival.",
+    "after_completion": "Hold final commanded pose; external presence lighting is unchanged."
+  },
+  "sound_assets": {},
+  "nominal_start": {
+    "pulse": [
+      1000,
+      1682,
+      1101
+    ],
+    "base_pulse": null
+  },
+  "expected_end": {
+    "pulse": [
+      1000,
+      1682,
+      990
+    ],
+    "base_pulse": null,
+    "base_behavior": "unchanged"
+  },
+  "estimated_motion_and_pause_seconds_from_nominal_start": 1.6,
+  "duration_note": "Excludes audio waits, communication delay and physical load; a different starting pose changes duration.",
+  "steps": [
+    {
+      "name": "Reference pose",
+      "pulse": [
+        1000,
+        1682,
+        1101
+      ],
+      "seconds": 0.8,
+      "pause": 0,
+      "sound": -1,
+      "easing": "quintic",
+      "delays": [
+        0,
+        0,
+        0
+      ],
+      "gesture_speed": 300
+    },
+    {
+      "name": "Lower head and hold",
+      "pulse": [
+        1000,
+        1682,
+        990
+      ],
+      "seconds": 0.8,
+      "pause": 0,
+      "sound": -1,
+      "easing": "quintic",
+      "delays": [
+        0,
+        0,
+        0
+      ],
+      "gesture_speed": 300
+    }
+  ],
+  "category": "basic",
+  "behavior_note": "Reference-pose primitive, not a relative gesture at an arbitrary current pose. First row moves arm to configured Rest. Head-only primitives leave base unchanged. Directions and amplitudes are model estimates; physical calibration remains unconfirmed."
+}

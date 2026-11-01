@@ -187,20 +187,28 @@ class LampLink(DemoLink):
         ending=1 if cfg['style']=='Robot chirps' else 3
         self.start_sound(ending,cfg['volume']);self.finish_sound(ending)
         self.emit('finished','Stretch complete. Upright pose holding. No camera detection was used.')
+    def idle(self):
+        """Optional background work, only while no action is executing."""
+        pass
     def worker(self):
         while True:
             kind=None
             try:
                 try:kind,data=self.jobs.get(timeout=.2)
                 except queue.Empty:
-                    if self.s and time.monotonic()-self.ui_alive<.8:self.exchange('arm_live ping')
+                    if self.s and time.monotonic()-self.ui_alive<.8:
+                        self.exchange('arm_live ping')
+                        self.idle()
                     continue
                 if kind=='connect':
                     if self.s:self.s.close()
                     self.session=None;from wireless_link import open_connection
                     p,self.s=open_connection(board_port,serial)
-                    self.exchange('arm_live status');self.session=self.state['session']
-                    if any(self.state['moving']) or self.state['base_spin']:self.exchange('arm_live freeze')
+                    raw=self.exchange('arm_live status');self.session=self.state['session']
+                    if any(self.state['moving']) or self.state['base_spin']:
+                        self.exchange('arm_live freeze')
+                    elif re.search(rb'\bboot_rest=1\b',raw) and self.state['active']==[1,1,1,1]:
+                        self.exchange('arm_live claim')
                     raw=self.exchange('audio_test status',rb'STATUS mode=OFFLINE_PCM')
                     count=re.search(rb'emotion_count=(\d+)',raw)
                     self.emit('connected',(p,int(count[1]) if count else 4 if re.search(EMOTION,raw) else 0))

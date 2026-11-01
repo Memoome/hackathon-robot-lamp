@@ -48,3 +48,12 @@ qm_err_t lamp_led_cli_init(void) {
 }
 
 void lamp_remote_led(int argc,char **argv){command(NULL,0,argc,argv);}
+
+qm_err_t lamp_led_boot_off(void) {
+    qm_err_t rc=bsp_ws2812_init();
+    if(rc!=QM_EOK)return rc;
+    initialized=1;
+    rc=bsp_ws2812_fill(0,0,0);
+    if(rc==QM_EOK)red=green=blue=0;
+    return rc;
+}

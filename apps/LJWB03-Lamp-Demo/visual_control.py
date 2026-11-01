@@ -1,6 +1,8 @@
-"""Calibrated side-view pose editor. Drawing is an estimate; no automatic hardware actions."""
+"""Calibrated side-view pose editor. Drawing is an estimate; automatic Stretch requires explicit visual-interaction enablement."""
 import copy,json,math,pathlib,queue,re,time,tkinter as tk
 import winsound
+import threading, urllib.request
+from visual_interaction import VisualActionTrigger, PresenceLight, visible_person
 from tkinter import ttk,messagebox,simpledialog,colorchooser
 from lamp_demo import LampLink,DEFAULT,validate,Cancelled,board_port
 from live_control import base_command
@@ -179,7 +181,25 @@ def base_motion_duration(start,row):
     return distance/speed if distance else 0
 
 class VisualLink(LampLink):
+    def idle(self):
+        context=getattr(self,'presence_light_context',None)
+        if context is None:return
+        enabled,present,expires=context
+        now=time.monotonic()
+        if not hasattr(self,'presence_light'):self.presence_light=PresenceLight()
+        rgb=self.presence_light.rgb(enabled and present and now<=expires,now)
+        # Actions can change the ring; restore the presence light after they finish.
+        if rgb!=getattr(self,'presence_light_last',None) or getattr(self,'presence_light_dirty',True):
+            raw=self.exchange('lamp_led set '+' '.join(map(str,rgb)),rb'LED_(?:STATUS|ERROR)[^\r\n]*')
+            if b'LED_ERROR' in raw:raise RuntimeError('Presence light update failed.')
+            self.presence_light_last=rgb;self.presence_light_dirty=False
+            self.emit('emotion_light',rgb)
+        if not enabled:self.presence_light_context=None
+    def led(self,data):
+        self.presence_light_dirty=True
+        super().led(data)
     def perform(self,kind,payload):
+        self.presence_light_dirty=True
         if isinstance(payload,dict) and payload.get('base_live'):
             self.live_base();self.emit('finished','Base drag stopped at current commanded position.');return
         if isinstance(payload,dict) and 'base_position' in payload:
@@ -341,6 +361,9 @@ class App:
         self.live_stream=False;self.control_held=False;self.last_live=None;self.real_angles=None;self.real_dragging=None
         self.previewing=False;self.preview_plan=None;self.performance_active=False;self.performance_target=None;self.performance_base_target=None
         self.real_reference=None
+        self.visual_trigger=VisualActionTrigger();self.visual_fetching=False;self.visual_next=0
+        self.visual_enabled=tk.BooleanVar(value=False)
+        self.visual_generation=0
         self.closing=False;self.disconnecting=False;self.retry_at=time.monotonic()+1.5;self.retry_count=0
         self.auto_connect=tk.BooleanVar(value=True)
         self.range_edit=tk.BooleanVar(value=False);self.range_center=tk.DoubleVar(value=0);self.range_dragging=False;self.range_joint=0
@@ -361,6 +384,10 @@ class App:
         ttk.Button(top,text='Disconnect…',command=self.disconnect_board).pack(side='right',padx=5)
         ttk.Checkbutton(top,text='Auto reconnect',variable=self.auto_connect).pack(side='right',padx=5)
         ttk.Button(top,text='Wireless setup',command=self.open_wireless_setup).pack(side='right',padx=5)
+        interactionbar=ttk.Frame(root,padding=(12,0,12,4));interactionbar.pack(fill='x')
+        ttk.Checkbutton(interactionbar,text='视觉联动：见人呼吸灯 · 久坐喝水 · 低头伸展',variable=self.visual_enabled,command=self.toggle_visual_interaction).pack(side='left')
+        self.visual_status=tk.StringVar(value='未启用 · 先连接并启用四个关节；视觉服务需运行')
+        ttk.Label(interactionbar,textvariable=self.visual_status).pack(side='left',padx=8)
         profilebar=ttk.Frame(root,padding=(12,0,12,6));profilebar.pack(fill='x')
         self.profile_name=tk.StringVar(value=self.p.get('profile_name','Lamp Cardboard Prototype'))
         self.profile_box=ttk.Combobox(profilebar,textvariable=self.profile_name,width=28);self.profile_box.pack(side='left')
@@ -602,6 +629,8 @@ class App:
         colour=colorchooser.askcolor(color=self.led_colour.get(),parent=self.root)[1]
         if colour:self.set_led_colour(colour)
     def apply_led(self,off=False):
+        self.visual_enabled.set(False);self.toggle_visual_interaction()
+        self.link.presence_light_context=None
         if self.busy:raise ValueError('Wait for the current action to finish or press STOP first.')
         if not off and not self.led_power.get():raise ValueError('Check the LED ring external 5V and common ground first.')
         self.send('led',None if off else led_rgb(self.led_colour.get(),round(self.led_brightness.get())))
@@ -1334,9 +1363,49 @@ class App:
         l.create_rectangle(20,145,w-20,163,fill='#304653',outline='')
         l.create_rectangle(20,145,20+(w-40)*level,163,fill=hue_colour,outline='')
         l.create_text(w/2,183,text=f'Brightness {level:.0%} · RGB {rgb[0]}, {rgb[1]}, {rgb[2]}',fill='white',font=('Segoe UI',10,'bold'))
+    def toggle_visual_interaction(self):
+        self.visual_generation+=1
+        self.link.presence_light_context=(self.visual_enabled.get(),False,0)
+        # Keep episode latch across toggles; enabling is not a new sitting session.
+        self.visual_status.set('等待新鲜久坐／低头状态' if self.visual_enabled.get() else '视觉联动已关闭')
+    def poll_visual_interaction(self):
+        if not self.visual_enabled.get() or self.visual_fetching or time.monotonic()<self.visual_next:return
+        self.visual_fetching=True;self.visual_next=time.monotonic()+.5
+        generation=self.visual_generation
+        def fetch():
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:8768/api/presence',timeout=1) as response:
+                    result=json.load(response)
+                self.events.put(('visual_presence',(generation,result,None)))
+            except Exception as exc:self.events.put(('visual_presence',(generation,{},str(exc))))
+        threading.Thread(target=fetch,daemon=True).start()
+    def handle_visual_presence(self,data):
+        self.visual_fetching=False
+        generation,snapshot,error=data
+        if generation!=self.visual_generation or not self.visual_enabled.get():return
+        if error:
+            self.link.presence_light_context=(True,False,0)
+            self.visual_status.set('视觉服务不可用；未触发动作');return
+        p=snapshot.get('presence') or {}
+        remaining=max(0,3-(time.time()-p.get('updated',0)))
+        self.link.presence_light_context=(True,visible_person(snapshot),time.monotonic()+remaining)
+        ready=(self.connected and not self.busy and not self.previewing
+               and not self.control_held and not self.base_control_held
+               and self.match_angles is None and not self.range_edit.get()
+               and self.state and all(self.state['active'][:4]))
+        action=self.visual_trigger.update(snapshot,ready)
+        if action:
+            try:
+                rows=self.action_rows(action)
+                self.send('slump',(rows,self.gesture_config(rows),self.count))
+                self.visual_status.set(('低头 5 秒：执行伸展' if action=='Stretch' else '久坐 10 秒：执行喝水')+'，本轮不再重复')
+            except Exception as exc:self.visual_status.set('动作未执行：'+str(exc))
+        else:
+            self.visual_status.set('等待久坐 10 秒／低头 5 秒（每轮一次）' if snapshot.get('active') else '视觉采集已停止')
     def stop(self):
         if self.performance_active:
             self.performance_active=False;self.preview_phase.set('Robot sequence stopped');self.playback_text.set('Stopped · remaining steps cancelled')
+        self.visual_enabled.set(False);self.toggle_visual_interaction()
         self.cancel_preview()
         self.end_control();self.live_enabled.set(False)
         self.base_release()
@@ -1344,6 +1413,7 @@ class App:
         if self.connected:self.busy=True;self.link.submit('stop')
         self.status.set('Stopped. Remaining routine cancelled.')
     def release(self):
+        self.visual_enabled.set(False);self.toggle_visual_interaction()
         self.cancel_preview()
         self.end_control();self.live_enabled.set(False)
         self.preview_token+=1
@@ -1353,6 +1423,7 @@ class App:
         self.end_control()
         if self.connected:
             if not messagebox.askokcancel('Close controller','Closing releases signals. Support the lamp first.',parent=self.root):return
+            self.visual_enabled.set(False);self.toggle_visual_interaction()
             self.closing=True;self.auto_connect.set(False)
             self.preview_token+=1;self.link.submit('close')
         else:self.root.destroy()
@@ -1360,6 +1431,7 @@ class App:
         if self.busy:messagebox.showinfo('Wait','Stop the current operation first.',parent=self.root);return
         if self.connected:
             if not messagebox.askokcancel('Disconnect','Support the lamp. Disconnecting releases its outputs.',parent=self.root):return
+            self.visual_enabled.set(False);self.toggle_visual_interaction()
             self.cancel_preview();self.end_control();self.live_enabled.set(False);self.auto_connect.set(False);self.disconnecting=True;self.busy=True;self.link.submit('close')
         else:self.auto_connect.set(False);self.status.set('Automatic reconnection paused. You can load profiles or preview offline.')
     def retry_connection(self):
@@ -1375,10 +1447,11 @@ class App:
         try:
             while True:
                 kind,data=self.events.get_nowait()
-                if kind=='connected':
+                if kind=='visual_presence':self.handle_visual_presence(data)
+                elif kind=='connected':
                     self.connected=True;self.busy=False;self.count=data[1];self.retry_count=0;self.connection.set(f'{data[0]} · {self.count} sounds ready')
                     self.power.set(True)
-                    self.live_enabled.set(False);self.status.set('Connected. Choose an action and press Run; released joints are prepared when you run.')
+                    self.live_enabled.set(False);self.status.set('Connected. Boot-held Rest is claimed without movement. Choose an action and press Run; released joints are prepared when you run. Interrupted actions are not resumed.')
                 elif kind=='state':
                     self.state=data
                     if self.performance_active:
@@ -1404,6 +1477,7 @@ class App:
                 elif kind=='error':
                     if self.performance_active:
                         self.performance_active=False;self.preview_phase.set('Connection lost · sequence cancelled');self.playback_text.set(str(data))
+                    self.visual_enabled.set(False);self.toggle_visual_interaction()
                     self.connected=False;self.busy=False;self.live_stream=False;self.live_enabled.set(False);self.end_control();self.base_release();self.power.set(False);self.state=None;self.preview_plan=None
                     self.retry_count+=1;self.retry_at=time.monotonic()+min(10,1.5*2**min(self.retry_count-1,3));self.connection.set('Disconnected · retry scheduled' if self.auto_connect.get() else 'Disconnected');self.status.set(data)
                     for label in self.test_states:label.set('Disconnected · physical position unknown')
@@ -1429,7 +1503,7 @@ class App:
                         self.link=VisualLink(lambda *e:self.events.put(e));continue
                     self.root.destroy();return
         except queue.Empty:pass
-        self.retry_connection();self.root.after(50,self.poll)
+        self.poll_visual_interaction();self.retry_connection();self.root.after(50,self.poll)
 
 if __name__=='__main__':
     root=tk.Tk();App(root);root.mainloop()

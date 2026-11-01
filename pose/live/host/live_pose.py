@@ -262,6 +262,7 @@ def stream_session(stop,emit,rotation=90,preview_every=10,commands=None,auto_sna
         set_rotation(s,rotation,diagnostic)
         s.write(f'cam_test preview {preview_every}\n'.encode())
         s.write(f'cam_test auto_snap {auto_snap}\n'.encode())
+        s.write(b'cam_test sit_limits 10 10\n')
         s.write(b'cam_test stream_start\n')
         emit('status','已连接。板端正在连续检测…')
         try:
