@@ -18,11 +18,7 @@ with patch.object(w,'request',side_effect=reply):
     except RuntimeError:pass
 
 cfg=dict(enabled=True,host='old.invalid',device='example-device',key='test-key')
-with patch.object(w,'settings',return_value=cfg),patch.object(w,'discover',return_value={'example-device':'new.invalid'}),patch.object(w,'save') as save:
-    label,link=w.open_connection(lambda: (_ for _ in ()).throw(AssertionError('USB used')),None)
-    assert label=='Wi-Fi new.invalid' and link.host=='new.invalid'
-    assert save.call_args.args[0]['host']=='new.invalid'
-    assert not link.input and not link.pending
+# USB/Wi-Fi racing and discovery are covered in test_connection_playback.py.
 
 class Response:
     status=403
